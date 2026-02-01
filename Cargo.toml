@@ -1,0 +1,41 @@
+[package]
+name = "genviz"
+version = "0.1.0"
+edition = "2021"
+description = "Unified AI media generation (image + video) via Flux, Gemini, and Grok APIs"
+license = "MIT"
+repository = "https://github.com/anthropics/genviz-rs"
+
+[features]
+default = ["image", "video"]
+
+# Image generation providers
+image = ["flux-image", "gemini-image", "grok-image"]
+flux-image = ["dep:base64"]
+gemini-image = ["dep:base64"]
+grok-image = ["dep:base64"]
+
+# Video generation providers
+video = ["grok-video", "veo"]
+grok-video = ["dep:base64"]
+veo = ["dep:base64"]
+
+# CLI binary
+cli = ["dep:clap", "dep:anyhow", "dep:base64", "image", "video"]
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+reqwest = { version = "0.12", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+async-trait = "0.1"
+tracing = "0.1"
+base64 = { version = "0.22", optional = true }
+clap = { version = "4", features = ["derive"], optional = true }
+anyhow = { version = "1", optional = true }
+
+[[bin]]
+name = "genviz"
+path = "src/bin/genviz.rs"
+required-features = ["cli"]

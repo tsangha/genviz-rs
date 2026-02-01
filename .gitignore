@@ -1,0 +1,9 @@
+/target
+Cargo.lock
+*.png
+*.jpg
+*.jpeg
+*.webp
+.env
+.env.*
+!.env.example
