@@ -139,8 +139,13 @@ impl ImageProvider for GrokProvider {
                 message: "No images in response".into(),
             })?;
 
-        // Handle both b64_json and url response formats
+        // Handle b64_json, image (edit endpoint), or url response formats
         let data = if let Some(b64) = image_data.b64_json {
+            base64::engine::general_purpose::STANDARD
+                .decode(&b64)
+                .map_err(|e| GenVizError::Decode(e.to_string()))?
+        } else if let Some(b64) = image_data.image {
+            // Edit endpoint returns base64 in "image" field
             base64::engine::general_purpose::STANDARD
                 .decode(&b64)
                 .map_err(|e| GenVizError::Decode(e.to_string()))?
@@ -157,7 +162,7 @@ impl ImageProvider for GrokProvider {
         } else {
             return Err(GenVizError::Api {
                 status: 500,
-                message: "Response contained neither b64_json nor url".into(),
+                message: "Response contained no image data".into(),
             });
         };
 
@@ -214,29 +219,46 @@ impl GrokRequest {
     }
 }
 
+/// Image URL structure for edit endpoint.
+#[derive(Debug, Serialize)]
+struct ImageUrl {
+    url: String,
+}
+
 /// Request for image editing endpoint.
 #[derive(Debug, Serialize)]
 struct GrokEditRequest {
     model: String,
     prompt: String,
-    /// Base64-encoded input image.
-    image: String,
+    /// Image as URL object (data URI or public URL).
+    image: ImageUrl,
     n: u32,
     response_format: String,
 }
 
 impl GrokEditRequest {
     fn from_generation_request(req: &GenerationRequest, model: &GrokModel) -> Self {
-        let image = req
+        // Format as data URI
+        let image_b64 = req
             .input_image
             .as_ref()
             .map(|img| base64::engine::general_purpose::STANDARD.encode(img))
             .unwrap_or_default();
 
+        // Detect mime type from magic bytes
+        let mime = req
+            .input_image
+            .as_ref()
+            .and_then(|img| crate::image::types::ImageFormat::from_magic_bytes(img))
+            .map(|f| f.mime_type())
+            .unwrap_or("image/png");
+
+        let data_uri = format!("data:{};base64,{}", mime, image_b64);
+
         Self {
             model: model.as_str().to_string(),
             prompt: req.prompt.clone(),
-            image,
+            image: ImageUrl { url: data_uri },
             n: 1,
             response_format: "b64_json".to_string(),
         }
@@ -256,4 +278,7 @@ struct GrokImageData {
     /// Image URL (when response_format is url)
     #[serde(default)]
     url: Option<String>,
+    /// Base64-encoded image from edit endpoint
+    #[serde(default)]
+    image: Option<String>,
 }
