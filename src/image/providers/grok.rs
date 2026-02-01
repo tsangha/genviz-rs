@@ -139,9 +139,27 @@ impl ImageProvider for GrokProvider {
                 message: "No images in response".into(),
             })?;
 
-        let data = base64::engine::general_purpose::STANDARD
-            .decode(&image_data.b64_json)
-            .map_err(|e| GenVizError::Decode(e.to_string()))?;
+        // Handle both b64_json and url response formats
+        let data = if let Some(b64) = image_data.b64_json {
+            base64::engine::general_purpose::STANDARD
+                .decode(&b64)
+                .map_err(|e| GenVizError::Decode(e.to_string()))?
+        } else if let Some(url) = image_data.url {
+            // Download image from URL
+            let img_response = self.client.get(&url).send().await?;
+            if !img_response.status().is_success() {
+                return Err(GenVizError::Api {
+                    status: img_response.status().as_u16(),
+                    message: "Failed to download image from URL".into(),
+                });
+            }
+            img_response.bytes().await?.to_vec()
+        } else {
+            return Err(GenVizError::Api {
+                status: 500,
+                message: "Response contained neither b64_json nor url".into(),
+            });
+        };
 
         let duration_ms = start.elapsed().as_millis() as u64;
         let format = ImageFormat::from_magic_bytes(&data).unwrap_or(ImageFormat::Png);
@@ -232,5 +250,10 @@ struct GrokResponse {
 
 #[derive(Debug, Deserialize)]
 struct GrokImageData {
-    b64_json: String,
+    /// Base64-encoded image (when response_format is b64_json)
+    #[serde(default)]
+    b64_json: Option<String>,
+    /// Image URL (when response_format is url)
+    #[serde(default)]
+    url: Option<String>,
 }
