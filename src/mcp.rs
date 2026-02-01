@@ -103,6 +103,9 @@ struct GenerateImageParams {
     /// Max concurrent generations (1-5, default 3).
     #[serde(default)]
     concurrency: Option<u32>,
+    /// Input image for editing (base64 encoded).
+    #[serde(default)]
+    input_image: Option<String>,
 }
 
 /// Generate video tool parameters.
@@ -282,6 +285,10 @@ impl McpServer {
                             "minimum": 1,
                             "maximum": 5,
                             "description": "Max concurrent generations (1-5, default 3)"
+                        },
+                        "input_image": {
+                            "type": "string",
+                            "description": "Base64-encoded input image for editing. All providers support this."
                         }
                     },
                     "required": ["prompt"]
@@ -388,6 +395,21 @@ impl McpServer {
         if let Some(ar) = &params.aspect_ratio {
             if let Some(ratio) = parse_aspect_ratio(ar) {
                 request = request.with_aspect_ratio(ratio);
+            }
+        }
+
+        // Decode and add input image for editing
+        if let Some(ref b64_image) = params.input_image {
+            use base64::Engine;
+            match base64::engine::general_purpose::STANDARD.decode(b64_image) {
+                Ok(data) => request = request.with_input_image(data),
+                Err(e) => {
+                    return JsonRpcResponse::error(
+                        id,
+                        -32602,
+                        format!("Invalid base64 in input_image: {}", e),
+                    );
+                }
             }
         }
 

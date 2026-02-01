@@ -45,6 +45,10 @@ pub enum GenVizError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// JSON serialization/deserialization error.
+    #[error("JSON error: {0}")]
+    Json(#[from] serde_json::Error),
+
     /// Provider not available (feature not enabled).
     #[error("provider not available: {0}")]
     ProviderNotAvailable(String),

@@ -110,7 +110,12 @@ impl FluxProvider {
     }
 
     async fn submit(&self, request: &GenerationRequest) -> Result<String> {
-        let url = format!("https://api.bfl.ml/v1/{}", self.model.endpoint());
+        // Use flux-kontext-pro for image editing, otherwise use the configured model
+        let url = if request.input_image.is_some() {
+            "https://api.bfl.ml/v1/flux-kontext-pro".to_string()
+        } else {
+            format!("https://api.bfl.ml/v1/{}", self.model.endpoint())
+        };
 
         let body = FluxRequest::from_generation_request(request);
 
@@ -279,16 +284,25 @@ struct FluxRequest {
     seed: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     aspect_ratio: Option<String>,
+    /// Input image for editing (base64 encoded).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    input_image: Option<String>,
 }
 
 impl FluxRequest {
     fn from_generation_request(req: &GenerationRequest) -> Self {
+        use base64::Engine;
+
         Self {
             prompt: req.prompt.clone(),
             width: req.width,
             height: req.height,
             seed: req.seed,
             aspect_ratio: req.aspect_ratio.map(|ar| ar.as_str().to_string()),
+            input_image: req
+                .input_image
+                .as_ref()
+                .map(|img| base64::engine::general_purpose::STANDARD.encode(img)),
         }
     }
 }

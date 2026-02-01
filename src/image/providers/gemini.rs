@@ -205,12 +205,26 @@ struct GeminiRequest {
 
 #[derive(Debug, Serialize)]
 struct GeminiContent {
-    parts: Vec<GeminiPart>,
+    parts: Vec<GeminiRequestPart>,
+}
+
+/// A part in a Gemini request - can be text or inline image data.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum GeminiRequestPart {
+    Text {
+        text: String,
+    },
+    InlineData {
+        inline_data: GeminiInlineData,
+    },
 }
 
 #[derive(Debug, Serialize)]
-struct GeminiPart {
-    text: String,
+#[serde(rename_all = "camelCase")]
+struct GeminiInlineData {
+    mime_type: String,
+    data: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -223,12 +237,30 @@ struct GeminiConfig {
 
 impl GeminiRequest {
     fn from_generation_request(req: &GenerationRequest) -> Self {
+        let mut parts = Vec::new();
+
+        // Add input image first if present (for editing)
+        if let Some(ref image_data) = req.input_image {
+            let mime_type = crate::image::types::ImageFormat::from_magic_bytes(image_data)
+                .map(|f| f.mime_type())
+                .unwrap_or("image/png")
+                .to_string();
+
+            parts.push(GeminiRequestPart::InlineData {
+                inline_data: GeminiInlineData {
+                    mime_type,
+                    data: base64::engine::general_purpose::STANDARD.encode(image_data),
+                },
+            });
+        }
+
+        // Add text prompt
+        parts.push(GeminiRequestPart::Text {
+            text: req.prompt.clone(),
+        });
+
         Self {
-            contents: vec![GeminiContent {
-                parts: vec![GeminiPart {
-                    text: req.prompt.clone(),
-                }],
-            }],
+            contents: vec![GeminiContent { parts }],
             generation_config: GeminiConfig {
                 response_modalities: vec!["IMAGE".to_string()],
                 seed: req.seed,

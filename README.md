@@ -119,6 +119,11 @@ genviz image "A portrait" -o portrait.png -p flux --width 768 --height 1024
 # Grok supports aspect ratio
 genviz image "A futuristic city" -o city.png -p grok --aspect-ratio 9:16
 
+# Image editing (all providers support --input)
+genviz image "Change the sofa to leather" -o edited.png -p gemini --input living_room.png
+genviz image "Add a hat to the person" -o with_hat.png -p flux --input portrait.jpg
+genviz image "Make the background sunset" -o sunset_bg.png -p grok --input photo.png
+
 # Generate video with Veo (requires gs:// output path)
 genviz video "A timelapse of clouds" -o gs://my-bucket/output/clouds.mp4 -p veo
 
@@ -134,11 +139,11 @@ genviz image "A dog" -o dog.png --json
 
 **Provider capabilities:**
 
-| Provider | `--aspect-ratio` | `--width`/`--height` | `--seed` |
-|----------|------------------|----------------------|----------|
-| Gemini   | ❌               | ❌                   | ✅       |
-| Flux     | ✅               | ✅                   | ✅       |
-| Grok     | ✅               | ❌                   | ❌       |
+| Provider | `--aspect-ratio` | `--width`/`--height` | `--seed` | `--input` (editing) |
+|----------|------------------|----------------------|----------|---------------------|
+| Gemini   | ❌               | ❌                   | ✅       | ✅                  |
+| Flux     | ✅               | ✅                   | ✅       | ✅                  |
+| Grok     | ✅               | ❌                   | ❌       | ✅                  |
 
 ## MCP Server (AI Agent Integration)
 
@@ -195,6 +200,7 @@ Add to `~/.claude/claude_desktop_config.json`:
 | `seed` | No | For deterministic generation (Gemini/Flux only) |
 | `count` | No | Number of images (1-10, default 1) |
 | `concurrency` | No | Max parallel requests (1-5, default 3) |
+| `input_image` | No | Base64-encoded image for editing (all providers) |
 
 #### `generate_video`
 

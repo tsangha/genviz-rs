@@ -61,6 +61,10 @@ struct ImageArgs {
     /// Aspect ratio (alternative to width/height)
     #[arg(long, value_enum)]
     aspect_ratio: Option<AspectRatioArg>,
+
+    /// Input image for editing (path to image file)
+    #[arg(short, long)]
+    input: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -166,6 +170,10 @@ fn validate_image_args(args: &ImageArgs) -> anyhow::Result<()> {
             if args.seed.is_some() {
                 anyhow::bail!("Grok does not support --seed");
             }
+            // Grok edit endpoint doesn't support aspect_ratio
+            if args.input.is_some() && args.aspect_ratio.is_some() {
+                anyhow::bail!("Grok does not support --aspect-ratio when editing images");
+            }
         }
         ImageProviderArg::Flux => {
             // Flux supports all options
@@ -188,6 +196,12 @@ async fn generate_image(args: ImageArgs, json_output: bool) -> anyhow::Result<()
     }
     if let Some(ar) = args.aspect_ratio {
         request = request.with_aspect_ratio(ar.into());
+    }
+
+    // Read input image for editing
+    if let Some(ref input_path) = args.input {
+        let input_data = std::fs::read(input_path)?;
+        request = request.with_input_image(input_data);
     }
 
     if let Some(ext) = args.output.extension().and_then(|e| e.to_str()) {

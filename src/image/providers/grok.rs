@@ -10,7 +10,8 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
-const API_URL: &str = "https://api.x.ai/v1/images/generations";
+const GENERATIONS_URL: &str = "https://api.x.ai/v1/images/generations";
+const EDITS_URL: &str = "https://api.x.ai/v1/images/edits";
 
 /// Grok Imagine model variants.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -99,11 +100,22 @@ impl ImageProvider for GrokProvider {
     async fn generate(&self, request: &GenerationRequest) -> Result<GeneratedImage> {
         let start = Instant::now();
 
-        let body = GrokRequest::from_generation_request(request, &self.model);
+        // Use edits endpoint if input image is provided
+        let (url, body) = if request.input_image.is_some() {
+            (
+                EDITS_URL,
+                serde_json::to_value(GrokEditRequest::from_generation_request(request, &self.model))?,
+            )
+        } else {
+            (
+                GENERATIONS_URL,
+                serde_json::to_value(GrokRequest::from_generation_request(request, &self.model))?,
+            )
+        };
 
         let response = self
             .client
-            .post(API_URL)
+            .post(url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
             .json(&body)
@@ -180,6 +192,35 @@ impl GrokRequest {
             n: 1,
             response_format: "b64_json".to_string(),
             aspect_ratio,
+        }
+    }
+}
+
+/// Request for image editing endpoint.
+#[derive(Debug, Serialize)]
+struct GrokEditRequest {
+    model: String,
+    prompt: String,
+    /// Base64-encoded input image.
+    image: String,
+    n: u32,
+    response_format: String,
+}
+
+impl GrokEditRequest {
+    fn from_generation_request(req: &GenerationRequest, model: &GrokModel) -> Self {
+        let image = req
+            .input_image
+            .as_ref()
+            .map(|img| base64::engine::general_purpose::STANDARD.encode(img))
+            .unwrap_or_default();
+
+        Self {
+            model: model.as_str().to_string(),
+            prompt: req.prompt.clone(),
+            image,
+            n: 1,
+            response_format: "b64_json".to_string(),
         }
     }
 }

@@ -157,6 +157,10 @@ pub struct GenerationRequest {
     pub aspect_ratio: Option<AspectRatio>,
     /// Desired output format.
     pub format: Option<ImageFormat>,
+    /// Input image for editing/inpainting (raw bytes).
+    /// Supported by Gemini and Flux, not Grok.
+    #[serde(skip)]
+    pub input_image: Option<Vec<u8>>,
 }
 
 impl GenerationRequest {
@@ -169,6 +173,7 @@ impl GenerationRequest {
             seed: None,
             aspect_ratio: None,
             format: None,
+            input_image: None,
         }
     }
 
@@ -195,6 +200,18 @@ impl GenerationRequest {
     pub fn with_format(mut self, format: ImageFormat) -> Self {
         self.format = Some(format);
         self
+    }
+
+    /// Sets an input image for editing/inpainting.
+    /// Supported by Gemini and Flux providers.
+    pub fn with_input_image(mut self, image: Vec<u8>) -> Self {
+        self.input_image = Some(image);
+        self
+    }
+
+    /// Returns true if this is an image editing request (has input image).
+    pub fn is_edit(&self) -> bool {
+        self.input_image.is_some()
     }
 }
 
