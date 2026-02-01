@@ -14,7 +14,7 @@ Unified Rust library for AI media generation (images and video) via multiple pro
 
 ```toml
 [dependencies]
-genviz = "0.1"
+genviz = "0.1.1"
 ```
 
 Feature flags:
