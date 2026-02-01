@@ -1,6 +1,6 @@
 //! Veo (Google) video generation provider.
 
-use crate::error::{GenVizError, Result};
+use crate::error::{sanitize_error_message, GenVizError, Result};
 use crate::video::provider::VideoProvider;
 use crate::video::types::{
     GeneratedVideo, VideoGenerationRequest, VideoMetadata, VideoProviderKind,
@@ -202,18 +202,19 @@ impl VeoProvider {
                     .to_string(),
             };
         }
+        let text = sanitize_error_message(text);
         if status == 429 {
             return GenVizError::RateLimited { retry_after: None };
         }
         if status == 401 || status == 403 {
-            return GenVizError::Auth(text.to_string());
+            return GenVizError::Auth(text);
         }
         if text.contains("SAFETY") || text.contains("blocked") {
-            return GenVizError::ContentBlocked(text.to_string());
+            return GenVizError::ContentBlocked(text);
         }
         GenVizError::Api {
             status,
-            message: text.to_string(),
+            message: text,
         }
     }
 }

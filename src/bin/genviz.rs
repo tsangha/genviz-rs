@@ -165,7 +165,9 @@ fn validate_image_args(args: &ImageArgs) -> anyhow::Result<()> {
         }
         ImageProviderArg::Grok => {
             if args.width.is_some() || args.height.is_some() {
-                anyhow::bail!("Grok does not support --width/--height (use --aspect-ratio instead)");
+                anyhow::bail!(
+                    "Grok does not support --width/--height (use --aspect-ratio instead)"
+                );
             }
             if args.seed.is_some() {
                 anyhow::bail!("Grok does not support --seed");

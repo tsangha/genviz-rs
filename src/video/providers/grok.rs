@@ -1,6 +1,6 @@
 //! Grok Imagine Video (xAI) video generation provider.
 
-use crate::error::{GenVizError, Result};
+use crate::error::{sanitize_error_message, GenVizError, Result};
 use crate::video::provider::VideoProvider;
 use crate::video::types::{
     GeneratedVideo, VideoGenerationRequest, VideoMetadata, VideoProviderKind,
@@ -176,18 +176,19 @@ impl GrokVideoProvider {
     }
 
     fn parse_error(&self, status: u16, text: &str) -> GenVizError {
+        let text = sanitize_error_message(text);
         if status == 429 {
             return GenVizError::RateLimited { retry_after: None };
         }
         if status == 401 || status == 403 {
-            return GenVizError::Auth(text.to_string());
+            return GenVizError::Auth(text);
         }
         if text.contains("safety") || text.contains("blocked") || text.contains("content_policy") {
-            return GenVizError::ContentBlocked(text.to_string());
+            return GenVizError::ContentBlocked(text);
         }
         GenVizError::Api {
             status,
-            message: text.to_string(),
+            message: text,
         }
     }
 }

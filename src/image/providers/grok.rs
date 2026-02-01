@@ -1,6 +1,6 @@
 //! Grok Imagine (xAI) image generation provider.
 
-use crate::error::{GenVizError, Result};
+use crate::error::{sanitize_error_message, GenVizError, Result};
 use crate::image::provider::ImageProvider;
 use crate::image::types::{
     GeneratedImage, GenerationMetadata, GenerationRequest, ImageFormat, ImageProviderKind,
@@ -79,18 +79,19 @@ impl GrokProvider {
     }
 
     fn parse_error(&self, status: u16, text: &str) -> GenVizError {
+        let text = sanitize_error_message(text);
         if status == 429 {
             return GenVizError::RateLimited { retry_after: None };
         }
         if status == 401 || status == 403 {
-            return GenVizError::Auth(text.to_string());
+            return GenVizError::Auth(text);
         }
         if text.contains("safety") || text.contains("blocked") || text.contains("content_policy") {
-            return GenVizError::ContentBlocked(text.to_string());
+            return GenVizError::ContentBlocked(text);
         }
         GenVizError::Api {
             status,
-            message: text.to_string(),
+            message: text,
         }
     }
 }
@@ -104,7 +105,10 @@ impl ImageProvider for GrokProvider {
         let (url, body) = if request.input_image.is_some() {
             (
                 EDITS_URL,
-                serde_json::to_value(GrokEditRequest::from_generation_request(request, &self.model))?,
+                serde_json::to_value(GrokEditRequest::from_generation_request(
+                    request,
+                    &self.model,
+                ))?,
             )
         } else {
             (

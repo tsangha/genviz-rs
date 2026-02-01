@@ -795,7 +795,9 @@ fn validate_image_params(provider: &str, params: &GenerateImageParams) -> Result
         }
         "grok" => {
             if params.width.is_some() || params.height.is_some() {
-                return Err("Grok does not support width/height (use aspect_ratio instead)".to_string());
+                return Err(
+                    "Grok does not support width/height (use aspect_ratio instead)".to_string(),
+                );
             }
             if params.seed.is_some() {
                 return Err("Grok does not support seed".to_string());

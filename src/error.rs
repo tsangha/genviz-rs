@@ -58,6 +58,25 @@ pub enum GenVizError {
     VideoGeneration(String),
 }
 
+/// Maximum length for error messages before truncation.
+const MAX_ERROR_LENGTH: usize = 500;
+
+/// Truncates error messages that may contain base64 or other large payloads.
+///
+/// API errors sometimes include the full request body (e.g., base64 images),
+/// which can bloat logs and session transcripts.
+pub fn sanitize_error_message(text: &str) -> String {
+    if text.len() > MAX_ERROR_LENGTH {
+        format!(
+            "{}... [truncated {} bytes]",
+            &text[..MAX_ERROR_LENGTH],
+            text.len() - MAX_ERROR_LENGTH
+        )
+    } else {
+        text.to_string()
+    }
+}
+
 impl GenVizError {
     /// Returns true if this error is likely transient and worth retrying.
     pub fn is_retryable(&self) -> bool {
@@ -123,5 +142,19 @@ mod tests {
 
         let err = GenVizError::ContentBlocked("Safety filter triggered".into());
         assert_eq!(err.to_string(), "content blocked: Safety filter triggered");
+    }
+
+    #[test]
+    fn test_sanitize_error_message() {
+        // Short messages pass through unchanged
+        let short = "Not found";
+        assert_eq!(sanitize_error_message(short), "Not found");
+
+        // Long messages (e.g., containing base64) get truncated
+        let long = "x".repeat(1000);
+        let result = sanitize_error_message(&long);
+        assert!(result.len() < 600);
+        assert!(result.contains("[truncated"));
+        assert!(result.contains("500 bytes]"));
     }
 }
