@@ -88,6 +88,10 @@ pub enum ImageProviderKind {
     Grok,
     /// OpenAI image models (GPT Image, DALL-E).
     OpenAI,
+    /// Kuaishou Kling AI image models.
+    Kling,
+    /// fal.ai image models.
+    Fal,
 }
 
 impl std::fmt::Display for ImageProviderKind {
@@ -97,6 +101,8 @@ impl std::fmt::Display for ImageProviderKind {
             Self::Gemini => write!(f, "gemini"),
             Self::Grok => write!(f, "grok"),
             Self::OpenAI => write!(f, "openai"),
+            Self::Kling => write!(f, "kling"),
+            Self::Fal => write!(f, "fal"),
         }
     }
 }
@@ -122,6 +128,12 @@ pub enum AspectRatio {
     /// 21:9 ultrawide aspect ratio.
     #[serde(rename = "21:9")]
     Ultrawide,
+    /// 3:2 landscape aspect ratio.
+    #[serde(rename = "3:2")]
+    ThreeTwo,
+    /// 2:3 portrait aspect ratio.
+    #[serde(rename = "2:3")]
+    TwoThree,
 }
 
 impl AspectRatio {
@@ -134,6 +146,8 @@ impl AspectRatio {
             Self::Standard => "4:3",
             Self::StandardPortrait => "3:4",
             Self::Ultrawide => "21:9",
+            Self::ThreeTwo => "3:2",
+            Self::TwoThree => "2:3",
         }
     }
 }

@@ -114,6 +114,8 @@ impl OpenAiImageProvider {
                     crate::image::AspectRatio::Standard => "1536x1024",
                     crate::image::AspectRatio::StandardPortrait => "1024x1536",
                     crate::image::AspectRatio::Ultrawide => "1536x1024",
+                    crate::image::AspectRatio::ThreeTwo => "1536x1024",
+                    crate::image::AspectRatio::TwoThree => "1024x1536",
                 },
                 OpenAiImageModel::DallE3 => match ar {
                     crate::image::AspectRatio::Square => "1024x1024",
@@ -122,6 +124,8 @@ impl OpenAiImageProvider {
                     crate::image::AspectRatio::Standard => "1792x1024",
                     crate::image::AspectRatio::StandardPortrait => "1024x1792",
                     crate::image::AspectRatio::Ultrawide => "1792x1024",
+                    crate::image::AspectRatio::ThreeTwo => "1792x1024",
+                    crate::image::AspectRatio::TwoThree => "1024x1792",
                 },
             };
             return Some(size.to_string());

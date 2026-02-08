@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "[pre-push] Running CI checks..."
+
+echo "  cargo check..."
+cargo check --all-features --quiet
+
+echo "  cargo clippy..."
+cargo clippy --all-features --quiet -- -D warnings
+
+echo "  cargo fmt..."
+cargo fmt --check
+
+echo "  cargo test..."
+cargo test --all-features --quiet
+
+echo "  cargo doc..."
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --quiet
+
+echo "[pre-push] All checks passed."

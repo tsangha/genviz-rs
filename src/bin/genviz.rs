@@ -7,7 +7,9 @@ use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "genviz")]
-#[command(about = "Generate images and videos via AI APIs (Flux, Gemini, Grok, OpenAI, Veo, Sora)")]
+#[command(
+    about = "Generate images and videos via AI APIs (Flux, Gemini, Grok, OpenAI, Kling, fal.ai, Veo, Sora)"
+)]
 #[command(version)]
 struct Cli {
     #[command(subcommand)]
@@ -66,7 +68,7 @@ struct ImageArgs {
     #[arg(short, long)]
     input: Option<PathBuf>,
 
-    /// Model variant (flux: flux-pro-1.1, flux-pro-1.1-ultra, flux-pro, flux-dev, flux-2-max, flux-2-pro, flux-2-flex, flux-2-klein-4b, flux-2-klein-9b, flux-kontext-pro, flux-kontext-max, flux-fill-pro, flux-expand-pro; gemini: nano-banana, nano-banana-pro; grok: grok-imagine; openai: gpt-image-1, dall-e-3)
+    /// Model variant (flux: flux-pro-1.1, flux-pro-1.1-ultra, flux-pro, flux-dev, flux-2-max, flux-2-pro, flux-2-flex, flux-2-klein-4b, flux-2-klein-9b, flux-kontext-pro, flux-kontext-max, flux-fill-pro, flux-expand-pro; gemini: nano-banana, nano-banana-pro; grok: grok-imagine; openai: gpt-image-1, dall-e-3; kling: kling-v1, kling-v1.5, kling-v2; fal: flux-schnell, flux-pro, flux-pro-ultra, recraft-v3, ideogram-v3, hidream)
     #[arg(long)]
     model: Option<String>,
 }
@@ -92,7 +94,11 @@ struct VideoArgs {
     #[arg(long)]
     aspect_ratio: Option<String>,
 
-    /// Model variant (grok: grok-imagine-video; openai: sora-2; veo: veo-3.1-generate-preview)
+    /// Source image URL for image-to-video generation
+    #[arg(long)]
+    source_image_url: Option<String>,
+
+    /// Model variant (grok: grok-imagine-video; openai: sora-2; veo: veo-3.1-generate-preview; fal: wan-2.1, wan-2.1-i2v, minimax, ltx-video)
     #[arg(long)]
     model: Option<String>,
 }
@@ -103,6 +109,8 @@ enum ImageProviderArg {
     Gemini,
     Grok,
     Openai,
+    Kling,
+    Fal,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -110,6 +118,8 @@ enum VideoProviderArg {
     Grok,
     Openai,
     Veo,
+    Kling,
+    Fal,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -203,6 +213,19 @@ fn validate_image_args(args: &ImageArgs) -> anyhow::Result<()> {
         }
         ImageProviderArg::Flux => {
             // Flux supports all options
+        }
+        ImageProviderArg::Kling => {
+            if args.width.is_some() || args.height.is_some() {
+                anyhow::bail!(
+                    "Kling does not support --width/--height (use --aspect-ratio instead)"
+                );
+            }
+            if args.seed.is_some() {
+                anyhow::bail!("Kling does not support --seed");
+            }
+        }
+        ImageProviderArg::Fal => {
+            // fal.ai supports all options
         }
     }
     Ok(())
@@ -345,6 +368,60 @@ async fn generate_image(args: ImageArgs, json_output: bool) -> anyhow::Result<()
                 anyhow::bail!("OpenAI image provider not enabled");
             }
         }
+        ImageProviderArg::Kling => {
+            #[cfg(feature = "kling-image")]
+            {
+                let mut builder = genviz::KlingImageProvider::builder();
+                if let Some(ref m) = args.model {
+                    let model = match m.as_str() {
+                        "kling-v1" => genviz::KlingImageModel::KlingV1,
+                        "kling-v1.5" | "kling-v1-5" => genviz::KlingImageModel::KlingV1_5,
+                        "kling-v2" => genviz::KlingImageModel::KlingV2,
+                        _ => anyhow::bail!(
+                            "Unknown Kling model: {}. Options: kling-v1, kling-v1.5, kling-v2",
+                            m
+                        ),
+                    };
+                    builder = builder.model(model);
+                }
+                let provider = builder.build()?;
+                provider.generate(&request).await?
+            }
+            #[cfg(not(feature = "kling-image"))]
+            {
+                anyhow::bail!("Kling image provider not enabled");
+            }
+        }
+        ImageProviderArg::Fal => {
+            #[cfg(feature = "fal-image")]
+            {
+                let mut builder = genviz::FalImageProvider::builder();
+                if let Some(ref m) = args.model {
+                    let model = match m.as_str() {
+                        "flux-schnell" => genviz::FalImageModel::FluxSchnell,
+                        "flux-pro" => genviz::FalImageModel::FluxPro,
+                        "flux-pro-ultra" => genviz::FalImageModel::FluxProUltra,
+                        "recraft-v3" => genviz::FalImageModel::RecraftV3,
+                        "ideogram-v3" => genviz::FalImageModel::Ideogram3,
+                        "hidream" => genviz::FalImageModel::HiDream,
+                        s if s.starts_with("fal-ai/") => {
+                            genviz::FalImageModel::Custom(s.to_string())
+                        }
+                        _ => anyhow::bail!(
+                            "Unknown fal.ai model: {}. Options: flux-schnell, flux-pro, flux-pro-ultra, recraft-v3, ideogram-v3, hidream, or fal-ai/...",
+                            m
+                        ),
+                    };
+                    builder = builder.model(model);
+                }
+                let provider = builder.build()?;
+                provider.generate(&request).await?
+            }
+            #[cfg(not(feature = "fal-image"))]
+            {
+                anyhow::bail!("fal.ai image provider not enabled");
+            }
+        }
     };
 
     if !json_output {
@@ -388,6 +465,9 @@ async fn generate_video(args: VideoArgs, json_output: bool) -> anyhow::Result<()
     }
     if let Some(ar) = args.aspect_ratio {
         request = request.with_aspect_ratio(ar);
+    }
+    if let Some(url) = args.source_image_url {
+        request = request.with_source_image(url);
     }
 
     if !json_output {
@@ -459,6 +539,46 @@ async fn generate_video(args: VideoArgs, json_output: bool) -> anyhow::Result<()
             #[cfg(not(feature = "veo"))]
             {
                 anyhow::bail!("Veo provider not enabled");
+            }
+        }
+        VideoProviderArg::Kling => {
+            #[cfg(feature = "kling-video")]
+            {
+                let builder = genviz::KlingVideoProvider::builder();
+                let provider = builder.build()?;
+                provider.generate(&request).await?
+            }
+            #[cfg(not(feature = "kling-video"))]
+            {
+                anyhow::bail!("Kling video provider not enabled");
+            }
+        }
+        VideoProviderArg::Fal => {
+            #[cfg(feature = "fal-video")]
+            {
+                let mut builder = genviz::FalVideoProvider::builder();
+                if let Some(ref m) = args.model {
+                    let model = match m.as_str() {
+                        "wan-2.1" | "wan" => genviz::FalVideoModel::Wan21,
+                        "wan-2.1-i2v" | "wan-i2v" => genviz::FalVideoModel::Wan21I2V,
+                        "minimax" => genviz::FalVideoModel::MiniMax,
+                        "ltx-video" | "ltx" => genviz::FalVideoModel::LtxVideo,
+                        s if s.starts_with("fal-ai/") => {
+                            genviz::FalVideoModel::Custom(s.to_string())
+                        }
+                        _ => anyhow::bail!(
+                            "Unknown fal.ai video model: {}. Options: wan-2.1, wan-2.1-i2v, minimax, ltx-video, or fal-ai/...",
+                            m
+                        ),
+                    };
+                    builder = builder.model(model);
+                }
+                let provider = builder.build()?;
+                provider.generate(&request).await?
+            }
+            #[cfg(not(feature = "fal-video"))]
+            {
+                anyhow::bail!("fal.ai video provider not enabled");
             }
         }
     };
@@ -543,6 +663,20 @@ fn list_providers(json_output: bool) -> anyhow::Result<()> {
             env_var: "OPENAI_API_KEY",
             enabled: cfg!(feature = "openai-image"),
         },
+        ProviderInfo {
+            name: "Kling (kling-v1, kling-v1.5, kling-v2)",
+            kind: "kling",
+            media_type: "image",
+            env_var: "KLING_ACCESS_KEY",
+            enabled: cfg!(feature = "kling-image"),
+        },
+        ProviderInfo {
+            name: "fal.ai (flux-schnell, flux-pro, flux-pro-ultra, recraft-v3, ideogram-v3, hidream)",
+            kind: "fal",
+            media_type: "image",
+            env_var: "FAL_KEY",
+            enabled: cfg!(feature = "fal-image"),
+        },
         // Video providers
         ProviderInfo {
             name: "Grok Imagine Video (xAI)",
@@ -564,6 +698,20 @@ fn list_providers(json_output: bool) -> anyhow::Result<()> {
             media_type: "video",
             env_var: "GOOGLE_API_KEY",
             enabled: cfg!(feature = "veo"),
+        },
+        ProviderInfo {
+            name: "Kling Video",
+            kind: "kling",
+            media_type: "video",
+            env_var: "KLING_ACCESS_KEY",
+            enabled: cfg!(feature = "kling-video"),
+        },
+        ProviderInfo {
+            name: "fal.ai (wan-2.1, minimax, ltx-video)",
+            kind: "fal",
+            media_type: "video",
+            env_var: "FAL_KEY",
+            enabled: cfg!(feature = "fal-video"),
         },
     ];
 

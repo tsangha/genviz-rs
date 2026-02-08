@@ -14,7 +14,7 @@ use tokio::sync::Semaphore;
 const MAX_COUNT: u32 = 10;
 
 /// Timeout for a single image generation (including provider polling).
-const IMAGE_GENERATION_TIMEOUT: Duration = Duration::from_secs(300);
+const IMAGE_GENERATION_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Timeout for video generation (including provider polling).
 const VIDEO_GENERATION_TIMEOUT: Duration = Duration::from_secs(600);
@@ -57,6 +57,8 @@ fn api_key_env_var(provider: &str) -> Option<&'static str> {
         "flux" => Some("BFL_API_KEY"),
         "grok" => Some("XAI_API_KEY"),
         "openai" => Some("OPENAI_API_KEY"),
+        "kling" => Some("KLING_ACCESS_KEY"),
+        "fal" => Some("FAL_KEY"),
         _ => None,
     }
 }
@@ -309,7 +311,7 @@ impl McpServer {
             Tool {
                 name: "generate_image",
                 description:
-                    "Generate an image from a text prompt using AI (Flux, Gemini, Grok, or OpenAI). Call list_providers first to see available models and which API keys are configured.",
+                    "Generate an image from a text prompt using AI (Flux, Gemini, Grok, Kling, fal.ai, or OpenAI). Call list_providers first to see available models and which API keys are configured.",
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -319,7 +321,7 @@ impl McpServer {
                         },
                         "provider": {
                             "type": "string",
-                            "enum": ["flux", "gemini", "grok", "openai"],
+                            "enum": ["flux", "gemini", "grok", "openai", "kling", "fal"],
                             "description": "AI provider to use (default: gemini)"
                         },
                         "output_path": {
@@ -340,7 +342,7 @@ impl McpServer {
                         },
                         "aspect_ratio": {
                             "type": "string",
-                            "enum": ["1:1", "16:9", "9:16", "4:3", "3:4", "21:9"],
+                            "enum": ["1:1", "16:9", "9:16", "4:3", "3:4", "21:9", "3:2", "2:3"],
                             "description": "Aspect ratio (Flux, Grok, and OpenAI only)"
                         },
                         "model": {
@@ -353,7 +355,9 @@ impl McpServer {
                                 "flux-kontext-pro", "flux-kontext-max",
                                 "flux-fill-pro", "flux-expand-pro",
                                 "grok-imagine",
-                                "gpt-image-1", "dall-e-3"
+                                "kling-v1", "kling-v1.5", "kling-v2",
+                                "gpt-image-1", "dall-e-3",
+                                "flux-schnell", "flux-pro-ultra", "recraft-v3", "ideogram-v3", "hidream"
                             ],
                             "description": "Model variant. Must match the selected provider. Call list_providers to see which models belong to which provider."
                         },
@@ -380,7 +384,7 @@ impl McpServer {
             Tool {
                 name: "generate_video",
                 description:
-                    "Generate a video from a text prompt using AI (Grok, OpenAI/Sora, or Veo). Call list_providers first to see available providers and which API keys are configured.",
+                    "Generate a video from a text prompt using AI (Grok, Kling, fal.ai, OpenAI/Sora, or Veo). Call list_providers first to see available providers and which API keys are configured.",
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -390,7 +394,7 @@ impl McpServer {
                         },
                         "provider": {
                             "type": "string",
-                            "enum": ["grok", "openai", "veo"],
+                            "enum": ["grok", "openai", "veo", "kling", "fal"],
                             "description": "AI provider to use (default: grok)"
                         },
                         "output_path": {
@@ -498,6 +502,32 @@ impl McpServer {
                         "width_height": true,
                         "seed": false
                     }
+                },
+                {
+                    "name": "kling",
+                    "api_key_env": "KLING_ACCESS_KEY",
+                    "api_key_set": check_key("KLING_ACCESS_KEY"),
+                    "default_model": "kling-v2",
+                    "models": ["kling-v1", "kling-v1.5", "kling-v2"],
+                    "capabilities": {
+                        "editing": true,
+                        "aspect_ratio": true,
+                        "width_height": false,
+                        "seed": false
+                    }
+                },
+                {
+                    "name": "fal",
+                    "api_key_env": "FAL_KEY",
+                    "api_key_set": check_key("FAL_KEY"),
+                    "default_model": "flux-schnell",
+                    "models": ["flux-schnell", "flux-pro", "flux-pro-ultra", "recraft-v3", "ideogram-v3", "hidream"],
+                    "capabilities": {
+                        "editing": true,
+                        "aspect_ratio": true,
+                        "width_height": true,
+                        "seed": true
+                    }
                 }
             ],
             "video_providers": [
@@ -530,6 +560,26 @@ impl McpServer {
                         "aspect_ratio": false,
                         "resolution": true,
                         "image_to_video": false
+                    }
+                },
+                {
+                    "name": "kling",
+                    "api_key_env": "KLING_ACCESS_KEY",
+                    "api_key_set": check_key("KLING_ACCESS_KEY"),
+                    "capabilities": {
+                        "duration": true,
+                        "aspect_ratio": false,
+                        "image_to_video": true
+                    }
+                },
+                {
+                    "name": "fal",
+                    "api_key_env": "FAL_KEY",
+                    "api_key_set": check_key("FAL_KEY"),
+                    "capabilities": {
+                        "duration": true,
+                        "aspect_ratio": true,
+                        "image_to_video": true
                     }
                 }
             ]
@@ -613,7 +663,7 @@ impl McpServer {
                         id,
                         -32602,
                         format!(
-                            "Invalid aspect_ratio '{}'. Valid values: 1:1, 16:9, 9:16, 4:3, 3:4, 21:9",
+                            "Invalid aspect_ratio '{}'. Valid values: 1:1, 16:9, 9:16, 4:3, 3:4, 21:9, 3:2, 2:3",
                             ar
                         ),
                     );
@@ -755,6 +805,8 @@ impl McpServer {
                 "grok" => generate_video_with_grok(&params).await,
                 "openai" => generate_video_with_openai(&params).await,
                 "veo" => generate_video_with_veo(&params).await,
+                "kling" => generate_video_with_kling(&params).await,
+                "fal" => generate_video_with_fal(&params).await,
                 _ => Err(format!("Unknown video provider: {}", provider_name)),
             }
         })
@@ -805,6 +857,8 @@ async fn generate_single(
         "gemini" => generate_with_gemini(request, model).await?,
         "grok" => generate_with_grok(request, model).await?,
         "openai" => generate_with_openai(request, model).await?,
+        "kling" => generate_with_kling(request, model).await?,
+        "fal" => generate_with_fal(request, model).await?,
         _ => return Err(format!("Unknown provider: {}", provider)),
     };
 
@@ -971,6 +1025,74 @@ async fn generate_with_openai(
     Err("OpenAI image provider not enabled".to_string())
 }
 
+#[cfg(feature = "kling-image")]
+async fn generate_with_kling(
+    request: &GenerationRequest,
+    model: Option<&str>,
+) -> Result<GeneratedImage, String> {
+    use crate::image::ImageProvider;
+    use crate::{KlingImageModel, KlingImageProvider};
+
+    let mut builder = KlingImageProvider::builder();
+
+    if let Some(m) = model {
+        let kling_model = match m {
+            "kling-v1" => KlingImageModel::KlingV1,
+            "kling-v1.5" | "kling-v1-5" => KlingImageModel::KlingV1_5,
+            "kling-v2" => KlingImageModel::KlingV2,
+            _ => return Err(format!("Unknown Kling model: {}", m)),
+        };
+        builder = builder.model(kling_model);
+    }
+
+    let provider = builder.build().map_err(|e| e.to_string())?;
+    provider.generate(request).await.map_err(|e| e.to_string())
+}
+
+#[cfg(not(feature = "kling-image"))]
+async fn generate_with_kling(
+    _request: &GenerationRequest,
+    _model: Option<&str>,
+) -> Result<GeneratedImage, String> {
+    Err("Kling image provider not enabled".to_string())
+}
+
+#[cfg(feature = "fal-image")]
+async fn generate_with_fal(
+    request: &GenerationRequest,
+    model: Option<&str>,
+) -> Result<GeneratedImage, String> {
+    use crate::image::ImageProvider;
+    use crate::{FalImageModel, FalImageProvider};
+
+    let mut builder = FalImageProvider::builder();
+
+    if let Some(m) = model {
+        let fal_model = match m {
+            "flux-schnell" => FalImageModel::FluxSchnell,
+            "flux-pro" => FalImageModel::FluxPro,
+            "flux-pro-ultra" => FalImageModel::FluxProUltra,
+            "recraft-v3" => FalImageModel::RecraftV3,
+            "ideogram-v3" => FalImageModel::Ideogram3,
+            "hidream" => FalImageModel::HiDream,
+            s if s.starts_with("fal-ai/") => FalImageModel::Custom(s.to_string()),
+            _ => return Err(format!("Unknown fal.ai model: {}", m)),
+        };
+        builder = builder.model(fal_model);
+    }
+
+    let provider = builder.build().map_err(|e| e.to_string())?;
+    provider.generate(request).await.map_err(|e| e.to_string())
+}
+
+#[cfg(not(feature = "fal-image"))]
+async fn generate_with_fal(
+    _request: &GenerationRequest,
+    _model: Option<&str>,
+) -> Result<GeneratedImage, String> {
+    Err("fal.ai image provider not enabled".to_string())
+}
+
 fn parse_aspect_ratio(s: &str) -> Option<crate::image::AspectRatio> {
     use crate::image::AspectRatio;
     match s {
@@ -980,6 +1102,8 @@ fn parse_aspect_ratio(s: &str) -> Option<crate::image::AspectRatio> {
         "4:3" => Some(AspectRatio::Standard),
         "3:4" => Some(AspectRatio::StandardPortrait),
         "21:9" => Some(AspectRatio::Ultrawide),
+        "3:2" => Some(AspectRatio::ThreeTwo),
+        "2:3" => Some(AspectRatio::TwoThree),
         _ => None,
     }
 }
@@ -1127,6 +1251,99 @@ async fn generate_video_with_openai(
     Err("OpenAI video (Sora) provider not enabled".to_string())
 }
 
+#[cfg(feature = "kling-video")]
+async fn generate_video_with_kling(
+    params: &GenerateVideoParams,
+) -> Result<VideoGenerationResult, String> {
+    use crate::video::{VideoGenerationRequest, VideoProvider};
+    use crate::KlingVideoProvider;
+
+    let mut request = VideoGenerationRequest::new(&params.prompt);
+
+    if let Some(d) = params.duration {
+        request = request.with_duration(d);
+    }
+    if let Some(url) = &params.source_image_url {
+        request = request.with_source_image(url.clone());
+    }
+
+    let provider = KlingVideoProvider::builder()
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let video = provider
+        .generate(&request)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    video.save(&params.output_path).map_err(|e| e.to_string())?;
+
+    Ok(VideoGenerationResult {
+        success: true,
+        provider: "kling".to_string(),
+        output_path: params.output_path.clone(),
+        size_bytes: video.size(),
+        model: video.metadata.model,
+        duration_ms: video.metadata.duration_ms,
+        video_duration_secs: video.metadata.video_duration_secs,
+    })
+}
+
+#[cfg(not(feature = "kling-video"))]
+async fn generate_video_with_kling(
+    _params: &GenerateVideoParams,
+) -> Result<VideoGenerationResult, String> {
+    Err("Kling video provider not enabled".to_string())
+}
+
+#[cfg(feature = "fal-video")]
+async fn generate_video_with_fal(
+    params: &GenerateVideoParams,
+) -> Result<VideoGenerationResult, String> {
+    use crate::video::{VideoGenerationRequest, VideoProvider};
+    use crate::FalVideoProvider;
+
+    let mut request = VideoGenerationRequest::new(&params.prompt);
+
+    if let Some(d) = params.duration {
+        request = request.with_duration(d);
+    }
+    if let Some(ar) = &params.aspect_ratio {
+        request = request.with_aspect_ratio(ar.clone());
+    }
+    if let Some(url) = &params.source_image_url {
+        request = request.with_source_image(url.clone());
+    }
+
+    let provider = FalVideoProvider::builder()
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let video = provider
+        .generate(&request)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    video.save(&params.output_path).map_err(|e| e.to_string())?;
+
+    Ok(VideoGenerationResult {
+        success: true,
+        provider: "fal".to_string(),
+        output_path: params.output_path.clone(),
+        size_bytes: video.size(),
+        model: video.metadata.model,
+        duration_ms: video.metadata.duration_ms,
+        video_duration_secs: video.metadata.video_duration_secs,
+    })
+}
+
+#[cfg(not(feature = "fal-video"))]
+async fn generate_video_with_fal(
+    _params: &GenerateVideoParams,
+) -> Result<VideoGenerationResult, String> {
+    Err("fal.ai video provider not enabled".to_string())
+}
+
 /// Validate image generation params against provider capabilities.
 fn validate_image_params(provider: &str, params: &GenerateImageParams) -> Result<(), String> {
     match provider {
@@ -1155,6 +1372,19 @@ fn validate_image_params(provider: &str, params: &GenerateImageParams) -> Result
         }
         "flux" => {
             // Flux supports all options
+        }
+        "fal" => {
+            // fal.ai supports all options
+        }
+        "kling" => {
+            if params.width.is_some() || params.height.is_some() {
+                return Err(
+                    "Kling does not support width/height (use aspect_ratio instead)".to_string(),
+                );
+            }
+            if params.seed.is_some() {
+                return Err("Kling does not support seed".to_string());
+            }
         }
         _ => {
             return Err(format!("Unknown provider: {}", provider));
@@ -1232,8 +1462,8 @@ mod tests {
         // Verify structure
         let image_providers = providers["image_providers"].as_array().unwrap();
         let video_providers = providers["video_providers"].as_array().unwrap();
-        assert_eq!(image_providers.len(), 4);
-        assert_eq!(video_providers.len(), 3);
+        assert_eq!(image_providers.len(), 6);
+        assert_eq!(video_providers.len(), 5);
 
         // Verify each image provider has required fields
         for p in image_providers {
@@ -1249,7 +1479,10 @@ mod tests {
             .iter()
             .map(|p| p["name"].as_str().unwrap())
             .collect();
-        assert_eq!(names, vec!["gemini", "flux", "grok", "openai"]);
+        assert_eq!(
+            names,
+            vec!["gemini", "flux", "grok", "openai", "kling", "fal"]
+        );
     }
 
     #[tokio::test]
@@ -1273,6 +1506,7 @@ mod tests {
         assert!(models.contains(&"grok-imagine")); // grok
         assert!(models.contains(&"gpt-image-1")); // openai
         assert!(models.contains(&"dall-e-3")); // openai
+        assert!(models.contains(&"flux-schnell")); // fal
     }
 
     #[tokio::test]
@@ -1421,6 +1655,24 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_image_params_fal_accepts_all() {
+        let params = GenerateImageParams {
+            prompt: "test".into(),
+            provider: None,
+            output_path: None,
+            width: Some(1024),
+            height: Some(768),
+            seed: Some(42),
+            aspect_ratio: Some("16:9".into()),
+            model: None,
+            count: None,
+            concurrency: None,
+            input_image: None,
+        };
+        assert!(validate_image_params("fal", &params).is_ok());
+    }
+
+    #[test]
     fn test_parse_aspect_ratio() {
         use crate::image::AspectRatio;
         assert_eq!(parse_aspect_ratio("1:1"), Some(AspectRatio::Square));
@@ -1432,6 +1684,8 @@ mod tests {
             Some(AspectRatio::StandardPortrait)
         );
         assert_eq!(parse_aspect_ratio("21:9"), Some(AspectRatio::Ultrawide));
+        assert_eq!(parse_aspect_ratio("3:2"), Some(AspectRatio::ThreeTwo));
+        assert_eq!(parse_aspect_ratio("2:3"), Some(AspectRatio::TwoThree));
         assert_eq!(parse_aspect_ratio("invalid"), None);
     }
 
@@ -1530,6 +1784,8 @@ mod tests {
         assert_eq!(api_key_env_var("grok"), Some("XAI_API_KEY"));
         assert_eq!(api_key_env_var("openai"), Some("OPENAI_API_KEY"));
         assert_eq!(api_key_env_var("veo"), Some("GOOGLE_API_KEY"));
+        assert_eq!(api_key_env_var("kling"), Some("KLING_ACCESS_KEY"));
+        assert_eq!(api_key_env_var("fal"), Some("FAL_KEY"));
         assert_eq!(api_key_env_var("unknown"), None);
     }
 
@@ -1539,7 +1795,7 @@ mod tests {
         let resp = server
             .generate_image(
                 json!(1),
-                json!({"prompt": "test", "provider": "flux", "aspect_ratio": "2:3"}),
+                json!({"prompt": "test", "provider": "flux", "aspect_ratio": "5:7"}),
             )
             .await;
 
@@ -1547,6 +1803,6 @@ mod tests {
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32602);
         assert!(err.message.contains("Invalid aspect_ratio"));
-        assert!(err.message.contains("2:3"));
+        assert!(err.message.contains("5:7"));
     }
 }

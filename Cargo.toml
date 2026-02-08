@@ -18,17 +18,21 @@ exclude = [".github/", ".claude/", ".env", ".env.*", "CLAUDE.md"]
 default = ["image", "video"]
 
 # Image generation providers
-image = ["flux-image", "gemini-image", "grok-image", "openai-image"]
+image = ["flux-image", "gemini-image", "grok-image", "openai-image", "kling-image", "fal-image"]
 flux-image = ["dep:base64"]
 gemini-image = ["dep:base64"]
 grok-image = ["dep:base64"]
 openai-image = ["dep:base64"]
+kling-image = ["dep:base64", "dep:jsonwebtoken"]
+fal-image = ["dep:base64"]
 
 # Video generation providers
-video = ["grok-video", "veo", "openai-video"]
+video = ["grok-video", "veo", "openai-video", "kling-video", "fal-video"]
 grok-video = ["dep:base64"]
 veo = ["dep:base64"]
 openai-video = ["dep:base64"]
+kling-video = ["dep:base64", "dep:jsonwebtoken"]
+fal-video = ["dep:base64"]
 
 # CLI binary
 cli = ["dep:clap", "dep:anyhow", "dep:tracing-subscriber", "dep:base64", "image", "video"]
@@ -42,6 +46,7 @@ thiserror = "2"
 async-trait = "0.1"
 tracing = "0.1"
 base64 = { version = "0.22", optional = true }
+jsonwebtoken = { version = "9", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
 anyhow = { version = "1", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"], optional = true }

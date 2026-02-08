@@ -42,11 +42,13 @@
 //! - `gemini-image`: Gemini (Google)
 //! - `grok-image`: Grok Imagine (xAI)
 //! - `openai-image`: OpenAI (gpt-image-1, dall-e-3)
+//! - `fal-image`: fal.ai (Flux, Recraft, Ideogram, HiDream)
 //!
 //! ## Video Generation
 //! - `grok-video`: Grok Imagine Video (xAI)
 //! - `openai-video`: Sora (OpenAI)
 //! - `veo`: Veo (Google)
+//! - `fal-video`: fal.ai (Wan, MiniMax, LTX Video)
 //!
 //! ## Meta Features
 //! - `image`: All image providers
@@ -87,6 +89,12 @@ pub use image::providers::{GrokModel, GrokProvider, GrokProviderBuilder};
 #[cfg(feature = "openai-image")]
 pub use image::providers::{OpenAiImageModel, OpenAiImageProvider, OpenAiImageProviderBuilder};
 
+#[cfg(feature = "kling-image")]
+pub use image::providers::{KlingImageModel, KlingImageProvider, KlingImageProviderBuilder};
+
+#[cfg(feature = "fal-image")]
+pub use image::providers::{FalImageModel, FalImageProvider, FalImageProviderBuilder};
+
 // Re-export commonly used video types
 #[cfg(feature = "video")]
 pub use video::{
@@ -102,6 +110,12 @@ pub use video::providers::{SoraModel, SoraProvider, SoraProviderBuilder};
 
 #[cfg(feature = "veo")]
 pub use video::providers::{VeoModel, VeoProvider, VeoProviderBuilder};
+
+#[cfg(feature = "kling-video")]
+pub use video::providers::{KlingVideoModel, KlingVideoProvider, KlingVideoProviderBuilder};
+
+#[cfg(feature = "fal-video")]
+pub use video::providers::{FalVideoModel, FalVideoProvider, FalVideoProviderBuilder};
 
 /// Prelude for convenient imports.
 pub mod prelude {
@@ -127,6 +141,12 @@ pub mod prelude {
     #[cfg(feature = "openai-image")]
     pub use crate::image::providers::OpenAiImageProvider;
 
+    #[cfg(feature = "kling-image")]
+    pub use crate::image::providers::KlingImageProvider;
+
+    #[cfg(feature = "fal-image")]
+    pub use crate::image::providers::FalImageProvider;
+
     #[cfg(feature = "grok-video")]
     pub use crate::video::providers::GrokVideoProvider;
 
@@ -135,4 +155,10 @@ pub mod prelude {
 
     #[cfg(feature = "veo")]
     pub use crate::video::providers::VeoProvider;
+
+    #[cfg(feature = "kling-video")]
+    pub use crate::video::providers::KlingVideoProvider;
+
+    #[cfg(feature = "fal-video")]
+    pub use crate::video::providers::FalVideoProvider;
 }

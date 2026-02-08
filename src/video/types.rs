@@ -14,6 +14,10 @@ pub enum VideoProviderKind {
     Veo,
     /// OpenAI Sora video generation.
     OpenAI,
+    /// Kuaishou Kling AI video generation.
+    Kling,
+    /// fal.ai video models.
+    Fal,
 }
 
 impl std::fmt::Display for VideoProviderKind {
@@ -22,6 +26,8 @@ impl std::fmt::Display for VideoProviderKind {
             Self::Grok => write!(f, "grok"),
             Self::Veo => write!(f, "veo"),
             Self::OpenAI => write!(f, "openai"),
+            Self::Kling => write!(f, "kling"),
+            Self::Fal => write!(f, "fal"),
         }
     }
 }

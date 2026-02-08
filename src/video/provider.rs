@@ -19,6 +19,8 @@ pub trait VideoProvider: Send + Sync {
             VideoProviderKind::Grok => "Grok Imagine Video (xAI)",
             VideoProviderKind::Veo => "Veo (Google)",
             VideoProviderKind::OpenAI => "Sora (OpenAI)",
+            VideoProviderKind::Kling => "Kling AI (Kuaishou)",
+            VideoProviderKind::Fal => "fal.ai",
         }
     }
 
