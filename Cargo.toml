@@ -51,7 +51,7 @@ name = "genviz"
 path = "src/bin/genviz.rs"
 required-features = ["cli"]
 
-[package.metadata.dist]
+[workspace.metadata.dist]
 cargo-dist-version = "0.30.3"
 ci = "github"
 installers = ["shell", "powershell"]
@@ -62,6 +62,8 @@ targets = [
     "x86_64-pc-windows-msvc",
 ]
 install-path = "CARGO_HOME"
+
+[package.metadata.dist]
 features = ["cli"]
 
 [profile.dist]
