@@ -7,12 +7,34 @@
 
 Generate images and videos with AI. Works as a **CLI**, a **Rust library**, or an **MCP server** for AI agents like Claude Code. Six providers, one interface, no lock-in.
 
-### Command line
+### Install
 
 ```bash
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/tsangha/genviz-rs/releases/latest/download/genviz-installer.sh | sh
+```
+
+<details>
+<summary>Windows / cargo / manual options</summary>
+
+```powershell
+# Windows
+powershell -ExecutionPolicy Bypass -Command "irm https://github.com/tsangha/genviz-rs/releases/latest/download/genviz-installer.ps1 | iex"
+```
+
+```bash
+# Or build from source
 cargo install genviz --features cli
+```
+
+</details>
+
+Set an API key for the provider you want to use:
+
+```bash
 export GOOGLE_API_KEY="..."  # or BFL_API_KEY, XAI_API_KEY, OPENAI_API_KEY
 ```
+
+### Command line
 
 ```bash
 $ genviz image "A cat wearing sunglasses" -o cat.png
@@ -28,20 +50,7 @@ Generated waves.mp4 (5s, 2.1MB) via grok in 12.3s
 ### Claude Code / MCP
 
 ```bash
-cargo install genviz --features cli
-```
-
-Add to `~/.claude/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "genviz": {
-      "command": "genviz",
-      "args": ["mcp"]
-    }
-  }
-}
+claude mcp add genviz -- genviz mcp
 ```
 
 Then just ask Claude: *"Generate an image of a sunset over mountains"* — it discovers available providers, models, and capabilities automatically via the `list_providers` tool.
