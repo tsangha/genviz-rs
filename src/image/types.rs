@@ -8,9 +8,12 @@ use std::path::Path;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ImageFormat {
+    /// PNG format (lossless).
     #[default]
     Png,
+    /// JPEG format (lossy).
     Jpeg,
+    /// WebP format (modern, efficient).
     WebP,
 }
 
@@ -77,9 +80,14 @@ impl ImageFormat {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ImageProviderKind {
+    /// Black Forest Labs Flux models.
     Flux,
+    /// Google Gemini image models.
     Gemini,
+    /// xAI Grok Imagine models.
     Grok,
+    /// OpenAI image models (GPT Image, DALL-E).
+    OpenAI,
 }
 
 impl std::fmt::Display for ImageProviderKind {
@@ -88,6 +96,7 @@ impl std::fmt::Display for ImageProviderKind {
             Self::Flux => write!(f, "flux"),
             Self::Gemini => write!(f, "gemini"),
             Self::Grok => write!(f, "grok"),
+            Self::OpenAI => write!(f, "openai"),
         }
     }
 }
@@ -95,16 +104,22 @@ impl std::fmt::Display for ImageProviderKind {
 /// Common aspect ratios for image generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AspectRatio {
+    /// 1:1 square aspect ratio.
     #[serde(rename = "1:1")]
     Square,
+    /// 16:9 landscape (widescreen) aspect ratio.
     #[serde(rename = "16:9")]
     Landscape,
+    /// 9:16 portrait (tall) aspect ratio.
     #[serde(rename = "9:16")]
     Portrait,
+    /// 4:3 standard landscape aspect ratio.
     #[serde(rename = "4:3")]
     Standard,
+    /// 3:4 standard portrait aspect ratio.
     #[serde(rename = "3:4")]
     StandardPortrait,
+    /// 21:9 ultrawide aspect ratio.
     #[serde(rename = "21:9")]
     Ultrawide,
 }
@@ -217,6 +232,7 @@ impl GenerationRequest {
 
 /// A generated image with its data and metadata.
 #[derive(Debug, Clone)]
+#[must_use = "generated image should be saved or processed"]
 pub struct GeneratedImage {
     /// Raw image bytes.
     pub data: Vec<u8>,

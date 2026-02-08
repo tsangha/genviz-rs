@@ -19,6 +19,7 @@ pub trait ImageProvider: Send + Sync {
             ImageProviderKind::Flux => "Flux (Black Forest Labs)",
             ImageProviderKind::Gemini => "Gemini (Google)",
             ImageProviderKind::Grok => "Grok Imagine (xAI)",
+            ImageProviderKind::OpenAI => "OpenAI (gpt-image)",
         }
     }
 

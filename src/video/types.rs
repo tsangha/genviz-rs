@@ -8,8 +8,12 @@ use std::path::Path;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum VideoProviderKind {
+    /// xAI Grok video generation.
     Grok,
+    /// Google Veo video generation.
     Veo,
+    /// OpenAI Sora video generation.
+    OpenAI,
 }
 
 impl std::fmt::Display for VideoProviderKind {
@@ -17,6 +21,7 @@ impl std::fmt::Display for VideoProviderKind {
         match self {
             Self::Grok => write!(f, "grok"),
             Self::Veo => write!(f, "veo"),
+            Self::OpenAI => write!(f, "openai"),
         }
     }
 }
@@ -88,6 +93,7 @@ impl VideoGenerationRequest {
 
 /// A generated video with its data and metadata.
 #[derive(Debug, Clone)]
+#[must_use = "generated video should be saved or processed"]
 pub struct GeneratedVideo {
     /// Raw video bytes.
     pub data: Vec<u8>,
@@ -135,5 +141,67 @@ impl GeneratedVideo {
     /// Returns the video as a data URL.
     pub fn to_data_url(&self) -> String {
         format!("data:{};base64,{}", self.mime_type, self.to_base64())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_video_provider_kind_display() {
+        assert_eq!(VideoProviderKind::Grok.to_string(), "grok");
+        assert_eq!(VideoProviderKind::Veo.to_string(), "veo");
+    }
+
+    #[test]
+    fn test_video_request_builder_chain() {
+        let req = VideoGenerationRequest::new("Ocean waves")
+            .with_duration(10)
+            .with_aspect_ratio("16:9")
+            .with_resolution("720p")
+            .with_source_image("https://example.com/photo.jpg");
+
+        assert_eq!(req.prompt, "Ocean waves");
+        assert_eq!(req.duration_secs, Some(10));
+        assert_eq!(req.aspect_ratio.as_deref(), Some("16:9"));
+        assert_eq!(req.resolution.as_deref(), Some("720p"));
+        assert_eq!(
+            req.source_image_url.as_deref(),
+            Some("https://example.com/photo.jpg")
+        );
+    }
+
+    #[test]
+    fn test_generated_video_size() {
+        let video = GeneratedVideo::new(
+            vec![0; 1024],
+            "video/mp4",
+            VideoProviderKind::Grok,
+            VideoMetadata::default(),
+        );
+        assert_eq!(video.size(), 1024);
+    }
+
+    #[test]
+    fn test_generated_video_to_base64() {
+        let video = GeneratedVideo::new(
+            vec![1, 2, 3],
+            "video/mp4",
+            VideoProviderKind::Grok,
+            VideoMetadata::default(),
+        );
+        assert_eq!(video.to_base64(), "AQID");
+    }
+
+    #[test]
+    fn test_generated_video_to_data_url() {
+        let video = GeneratedVideo::new(
+            vec![1, 2, 3],
+            "video/mp4",
+            VideoProviderKind::Grok,
+            VideoMetadata::default(),
+        );
+        assert_eq!(video.to_data_url(), "data:video/mp4;base64,AQID");
     }
 }

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "genviz")]
-#[command(about = "Generate images and videos via AI APIs (Flux, Gemini, Grok, Veo)")]
+#[command(about = "Generate images and videos via AI APIs (Flux, Gemini, Grok, OpenAI, Veo, Sora)")]
 #[command(version)]
 struct Cli {
     #[command(subcommand)]
@@ -65,6 +65,10 @@ struct ImageArgs {
     /// Input image for editing (path to image file)
     #[arg(short, long)]
     input: Option<PathBuf>,
+
+    /// Model variant (flux: flux-pro-1.1, flux-pro-1.1-ultra, flux-pro, flux-dev, flux-2-max, flux-2-pro, flux-2-flex, flux-2-klein-4b, flux-2-klein-9b, flux-kontext-pro, flux-kontext-max, flux-fill-pro, flux-expand-pro; gemini: nano-banana, nano-banana-pro; grok: grok-imagine; openai: gpt-image-1, dall-e-3)
+    #[arg(long)]
+    model: Option<String>,
 }
 
 #[derive(Args)]
@@ -87,6 +91,10 @@ struct VideoArgs {
     /// Aspect ratio (e.g., 16:9)
     #[arg(long)]
     aspect_ratio: Option<String>,
+
+    /// Model variant (grok: grok-imagine-video; openai: sora-2; veo: veo-3.1-generate-preview)
+    #[arg(long)]
+    model: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -94,11 +102,13 @@ enum ImageProviderArg {
     Flux,
     Gemini,
     Grok,
+    Openai,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum VideoProviderArg {
     Grok,
+    Openai,
     Veo,
 }
 
@@ -133,6 +143,15 @@ impl From<AspectRatioArg> for AspectRatio {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Initialize tracing subscriber (respects RUST_LOG, defaults to warn)
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+        )
+        .with_writer(std::io::stderr)
+        .init();
+
     let cli = Cli::parse();
 
     match cli.command {
@@ -177,6 +196,11 @@ fn validate_image_args(args: &ImageArgs) -> anyhow::Result<()> {
                 anyhow::bail!("Grok does not support --aspect-ratio when editing images");
             }
         }
+        ImageProviderArg::Openai => {
+            if args.seed.is_some() {
+                anyhow::bail!("OpenAI does not support --seed");
+            }
+        }
         ImageProviderArg::Flux => {
             // Flux supports all options
         }
@@ -212,11 +236,43 @@ async fn generate_image(args: ImageArgs, json_output: bool) -> anyhow::Result<()
         }
     }
 
+    if !json_output {
+        let action = if args.input.is_some() {
+            "Editing"
+        } else {
+            "Generating"
+        };
+        eprint!("{} image via {:?}... ", action, args.provider);
+    }
+
     let image = match args.provider {
         ImageProviderArg::Flux => {
             #[cfg(feature = "flux-image")]
             {
-                let provider = genviz::FluxProvider::builder().build()?;
+                let mut builder = genviz::FluxProvider::builder();
+                if let Some(ref m) = args.model {
+                    let model = match m.as_str() {
+                        "flux-pro-1.1" => genviz::FluxModel::FluxPro11,
+                        "flux-pro-1.1-ultra" => genviz::FluxModel::FluxPro11Ultra,
+                        "flux-pro" => genviz::FluxModel::FluxPro,
+                        "flux-dev" => genviz::FluxModel::FluxDev,
+                        "flux-2-max" | "flux2-max" => genviz::FluxModel::Flux2Max,
+                        "flux-2-pro" | "flux2-pro" => genviz::FluxModel::Flux2Pro,
+                        "flux-2-flex" | "flux2-flex" => genviz::FluxModel::Flux2Flex,
+                        "flux-2-klein-4b" | "flux2-klein-4b" => genviz::FluxModel::Flux2Klein4B,
+                        "flux-2-klein-9b" | "flux2-klein-9b" => genviz::FluxModel::Flux2Klein9B,
+                        "flux-kontext-pro" | "kontext-pro" => genviz::FluxModel::KontextPro,
+                        "flux-kontext-max" | "kontext-max" => genviz::FluxModel::KontextMax,
+                        "flux-fill-pro" | "fill-pro" => genviz::FluxModel::FillPro,
+                        "flux-expand-pro" | "expand-pro" => genviz::FluxModel::ExpandPro,
+                        _ => anyhow::bail!(
+                            "Unknown Flux model: {}. Options: flux-pro-1.1, flux-pro-1.1-ultra, flux-pro, flux-dev, flux-2-max, flux-2-pro, flux-2-flex, flux-2-klein-4b, flux-2-klein-9b, flux-kontext-pro, flux-kontext-max, flux-fill-pro, flux-expand-pro",
+                            m
+                        ),
+                    };
+                    builder = builder.model(model);
+                }
+                let provider = builder.build()?;
                 provider.generate(&request).await?
             }
             #[cfg(not(feature = "flux-image"))]
@@ -227,7 +283,19 @@ async fn generate_image(args: ImageArgs, json_output: bool) -> anyhow::Result<()
         ImageProviderArg::Gemini => {
             #[cfg(feature = "gemini-image")]
             {
-                let provider = genviz::GeminiProvider::builder().build()?;
+                let mut builder = genviz::GeminiProvider::builder();
+                if let Some(ref m) = args.model {
+                    let model = match m.as_str() {
+                        "nano-banana" => genviz::GeminiModel::NanoBanana,
+                        "nano-banana-pro" => genviz::GeminiModel::NanoBananaPro,
+                        _ => anyhow::bail!(
+                            "Unknown Gemini model: {}. Options: nano-banana, nano-banana-pro",
+                            m
+                        ),
+                    };
+                    builder = builder.model(model);
+                }
+                let provider = builder.build()?;
                 provider.generate(&request).await?
             }
             #[cfg(not(feature = "gemini-image"))]
@@ -238,7 +306,15 @@ async fn generate_image(args: ImageArgs, json_output: bool) -> anyhow::Result<()
         ImageProviderArg::Grok => {
             #[cfg(feature = "grok-image")]
             {
-                let provider = genviz::GrokProvider::builder().build()?;
+                let mut builder = genviz::GrokProvider::builder();
+                if let Some(ref m) = args.model {
+                    let model = match m.as_str() {
+                        "grok-imagine" => genviz::GrokModel::GrokImagine,
+                        _ => anyhow::bail!("Unknown Grok model: {}. Options: grok-imagine", m),
+                    };
+                    builder = builder.model(model);
+                }
+                let provider = builder.build()?;
                 provider.generate(&request).await?
             }
             #[cfg(not(feature = "grok-image"))]
@@ -246,7 +322,34 @@ async fn generate_image(args: ImageArgs, json_output: bool) -> anyhow::Result<()
                 anyhow::bail!("Grok provider not enabled");
             }
         }
+        ImageProviderArg::Openai => {
+            #[cfg(feature = "openai-image")]
+            {
+                let mut builder = genviz::OpenAiImageProvider::builder();
+                if let Some(ref m) = args.model {
+                    let model = match m.as_str() {
+                        "gpt-image-1" => genviz::OpenAiImageModel::GptImage1,
+                        "dall-e-3" => genviz::OpenAiImageModel::DallE3,
+                        _ => anyhow::bail!(
+                            "Unknown OpenAI model: {}. Options: gpt-image-1, dall-e-3",
+                            m
+                        ),
+                    };
+                    builder = builder.model(model);
+                }
+                let provider = builder.build()?;
+                provider.generate(&request).await?
+            }
+            #[cfg(not(feature = "openai-image"))]
+            {
+                anyhow::bail!("OpenAI image provider not enabled");
+            }
+        }
     };
+
+    if !json_output {
+        eprintln!("done.");
+    }
 
     image.save(&args.output)?;
 
@@ -287,11 +390,29 @@ async fn generate_video(args: VideoArgs, json_output: bool) -> anyhow::Result<()
         request = request.with_aspect_ratio(ar);
     }
 
+    if !json_output {
+        eprint!(
+            "Generating video via {:?} (this may take a few minutes)... ",
+            args.provider
+        );
+    }
+
     let video = match args.provider {
         VideoProviderArg::Grok => {
             #[cfg(feature = "grok-video")]
             {
-                let provider = genviz::GrokVideoProvider::builder().build()?;
+                let mut builder = genviz::GrokVideoProvider::builder();
+                if let Some(ref m) = args.model {
+                    let model = match m.as_str() {
+                        "grok-imagine-video" => genviz::GrokVideoModel::GrokImagineVideo,
+                        _ => anyhow::bail!(
+                            "Unknown Grok video model: {}. Options: grok-imagine-video",
+                            m
+                        ),
+                    };
+                    builder = builder.model(model);
+                }
+                let provider = builder.build()?;
                 provider.generate(&request).await?
             }
             #[cfg(not(feature = "grok-video"))]
@@ -299,10 +420,40 @@ async fn generate_video(args: VideoArgs, json_output: bool) -> anyhow::Result<()
                 anyhow::bail!("Grok video provider not enabled");
             }
         }
+        VideoProviderArg::Openai => {
+            #[cfg(feature = "openai-video")]
+            {
+                let mut builder = genviz::SoraProvider::builder();
+                if let Some(ref m) = args.model {
+                    let model = match m.as_str() {
+                        "sora-2" => genviz::SoraModel::Sora2,
+                        _ => anyhow::bail!("Unknown Sora model: {}. Options: sora-2", m),
+                    };
+                    builder = builder.model(model);
+                }
+                let provider = builder.build()?;
+                provider.generate(&request).await?
+            }
+            #[cfg(not(feature = "openai-video"))]
+            {
+                anyhow::bail!("OpenAI video (Sora) provider not enabled");
+            }
+        }
         VideoProviderArg::Veo => {
             #[cfg(feature = "veo")]
             {
-                let provider = genviz::VeoProvider::builder().build()?;
+                let mut builder = genviz::VeoProvider::builder();
+                if let Some(ref m) = args.model {
+                    let model = match m.as_str() {
+                        "veo-3.1-generate-preview" => genviz::VeoModel::Veo31Preview,
+                        _ => anyhow::bail!(
+                            "Unknown Veo model: {}. Options: veo-3.1-generate-preview",
+                            m
+                        ),
+                    };
+                    builder = builder.model(model);
+                }
+                let provider = builder.build()?;
                 provider.generate(&request).await?
             }
             #[cfg(not(feature = "veo"))]
@@ -311,6 +462,10 @@ async fn generate_video(args: VideoArgs, json_output: bool) -> anyhow::Result<()
             }
         }
     };
+
+    if !json_output {
+        eprintln!("done.");
+    }
 
     video.save(&args.output)?;
 
@@ -361,7 +516,7 @@ fn list_providers(json_output: bool) -> anyhow::Result<()> {
     let providers = vec![
         // Image providers
         ProviderInfo {
-            name: "Flux (Black Forest Labs)",
+            name: "Flux (Black Forest Labs) - models: flux-pro-1.1, flux-pro-1.1-ultra, flux-pro, flux-dev, flux-2-max, flux-2-pro, flux-2-flex, flux-2-klein-4b, flux-2-klein-9b, flux-kontext-pro, flux-kontext-max, flux-fill-pro, flux-expand-pro",
             kind: "flux",
             media_type: "image",
             env_var: "BFL_API_KEY",
@@ -381,6 +536,13 @@ fn list_providers(json_output: bool) -> anyhow::Result<()> {
             env_var: "XAI_API_KEY",
             enabled: cfg!(feature = "grok-image"),
         },
+        ProviderInfo {
+            name: "OpenAI (gpt-image-1, dall-e-3)",
+            kind: "openai",
+            media_type: "image",
+            env_var: "OPENAI_API_KEY",
+            enabled: cfg!(feature = "openai-image"),
+        },
         // Video providers
         ProviderInfo {
             name: "Grok Imagine Video (xAI)",
@@ -388,6 +550,13 @@ fn list_providers(json_output: bool) -> anyhow::Result<()> {
             media_type: "video",
             env_var: "XAI_API_KEY",
             enabled: cfg!(feature = "grok-video"),
+        },
+        ProviderInfo {
+            name: "Sora (OpenAI)",
+            kind: "openai",
+            media_type: "video",
+            env_var: "OPENAI_API_KEY",
+            enabled: cfg!(feature = "openai-video"),
         },
         ProviderInfo {
             name: "Veo (Google)",

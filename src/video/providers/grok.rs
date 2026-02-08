@@ -1,6 +1,6 @@
 //! Grok Imagine Video (xAI) video generation provider.
 
-use crate::error::{sanitize_error_message, GenVizError, Result};
+use crate::error::{parse_retry_after, sanitize_error_message, GenVizError, Result};
 use crate::video::provider::VideoProvider;
 use crate::video::types::{
     GeneratedVideo, VideoGenerationRequest, VideoMetadata, VideoProviderKind,
@@ -14,11 +14,13 @@ const SUBMIT_URL: &str = "https://api.x.ai/v1/videos/generations";
 /// Grok video model variants.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum GrokVideoModel {
+    /// Grok Imagine Video - xAI's video generation model.
     #[default]
     GrokImagineVideo,
 }
 
 impl GrokVideoModel {
+    /// Returns the API model identifier string.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::GrokImagineVideo => "grok-imagine-video",
@@ -47,30 +49,36 @@ impl Default for GrokVideoProviderBuilder {
 }
 
 impl GrokVideoProviderBuilder {
+    /// Creates a new builder with default settings.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Sets the API key. Falls back to `XAI_API_KEY` env var.
     pub fn api_key(mut self, key: impl Into<String>) -> Self {
         self.api_key = Some(key.into());
         self
     }
 
+    /// Sets the Grok video model variant.
     pub fn model(mut self, model: GrokVideoModel) -> Self {
         self.model = model;
         self
     }
 
+    /// Sets the polling interval for async generation.
     pub fn poll_interval(mut self, interval: Duration) -> Self {
         self.poll_interval = interval;
         self
     }
 
+    /// Sets the maximum time to wait for generation.
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
     }
 
+    /// Builds the provider, resolving the API key.
     pub fn build(self) -> Result<GrokVideoProvider> {
         let api_key = self
             .api_key
@@ -99,6 +107,7 @@ pub struct GrokVideoProvider {
 }
 
 impl GrokVideoProvider {
+    /// Creates a new `GrokVideoProviderBuilder`.
     pub fn builder() -> GrokVideoProviderBuilder {
         GrokVideoProviderBuilder::new()
     }
@@ -118,8 +127,9 @@ impl GrokVideoProvider {
 
         let status = response.status();
         if !status.is_success() {
+            let headers = response.headers().clone();
             let text = response.text().await.unwrap_or_default();
-            return Err(self.parse_error(status.as_u16(), &text));
+            return Err(self.parse_error(status.as_u16(), &text, &headers));
         }
 
         let submit_response: GrokVideoSubmitResponse = response.json().await?;
@@ -147,13 +157,19 @@ impl GrokVideoProvider {
 
             // 202 means still processing
             if status.as_u16() == 202 {
+                tracing::debug!(
+                    request_id = %request_id,
+                    elapsed_secs = start.elapsed().as_secs(),
+                    "polling Grok video generation"
+                );
                 tokio::time::sleep(self.poll_interval).await;
                 continue;
             }
 
             if !status.is_success() {
+                let headers = response.headers().clone();
                 let text = response.text().await.unwrap_or_default();
-                return Err(self.parse_error(status.as_u16(), &text));
+                return Err(self.parse_error(status.as_u16(), &text, &headers));
             }
 
             let result: GrokVideoResultResponse = response.json().await?;
@@ -175,15 +191,36 @@ impl GrokVideoProvider {
         Ok(response.bytes().await?.to_vec())
     }
 
-    fn parse_error(&self, status: u16, text: &str) -> GenVizError {
+    fn parse_error(
+        &self,
+        status: u16,
+        text: &str,
+        headers: &reqwest::header::HeaderMap,
+    ) -> GenVizError {
         let text = sanitize_error_message(text);
+        if status == 402 {
+            return GenVizError::Billing(
+                "Insufficient credits. Check your xAI billing at console.x.ai".into(),
+            );
+        }
+        if status == 422 {
+            return GenVizError::InvalidRequest(text);
+        }
         if status == 429 {
-            return GenVizError::RateLimited { retry_after: None };
+            let retry_after = parse_retry_after(headers).map(std::time::Duration::from_secs);
+            return GenVizError::RateLimited { retry_after };
         }
         if status == 401 || status == 403 {
             return GenVizError::Auth(text);
         }
-        if text.contains("safety") || text.contains("blocked") || text.contains("content_policy") {
+        let lower = text.to_lowercase();
+        if lower.contains("safety")
+            || lower.contains("blocked")
+            || lower.contains("content_policy")
+            || lower.contains("moderated")
+            || lower.contains("content moderated")
+            || lower.contains("try a different idea")
+        {
             return GenVizError::ContentBlocked(text);
         }
         GenVizError::Api {
@@ -280,4 +317,80 @@ struct GrokVideoResultResponse {
 #[derive(Debug, Deserialize)]
 struct GrokVideoResult {
     url: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_grok_video_model_as_str() {
+        assert_eq!(
+            GrokVideoModel::GrokImagineVideo.as_str(),
+            "grok-imagine-video"
+        );
+    }
+
+    #[test]
+    fn test_builder_with_explicit_key() {
+        let provider = GrokVideoProviderBuilder::new().api_key("xai-test").build();
+        assert!(provider.is_ok());
+    }
+
+    #[test]
+    fn test_builder_custom_timeouts() {
+        let provider = GrokVideoProviderBuilder::new()
+            .api_key("xai-test")
+            .poll_interval(Duration::from_secs(5))
+            .timeout(Duration::from_secs(600))
+            .build()
+            .unwrap();
+        assert_eq!(provider.poll_interval, Duration::from_secs(5));
+        assert_eq!(provider.timeout, Duration::from_secs(600));
+    }
+
+    #[test]
+    fn test_request_construction_basic() {
+        let req = VideoGenerationRequest::new("A cat");
+        let grok_req = GrokVideoRequest::from_request(&req, &GrokVideoModel::GrokImagineVideo);
+
+        assert_eq!(grok_req.prompt, "A cat");
+        assert_eq!(grok_req.model, "grok-imagine-video");
+        assert!(grok_req.duration.is_none());
+        assert!(grok_req.image.is_none());
+    }
+
+    #[test]
+    fn test_request_construction_with_duration() {
+        let req = VideoGenerationRequest::new("A cat").with_duration(10);
+        let grok_req = GrokVideoRequest::from_request(&req, &GrokVideoModel::GrokImagineVideo);
+
+        assert_eq!(grok_req.duration, Some(10));
+    }
+
+    #[test]
+    fn test_request_construction_with_source_image() {
+        let req = VideoGenerationRequest::new("Animate this")
+            .with_source_image("https://example.com/photo.jpg");
+        let grok_req = GrokVideoRequest::from_request(&req, &GrokVideoModel::GrokImagineVideo);
+
+        assert_eq!(
+            grok_req.image.as_ref().unwrap().url,
+            "https://example.com/photo.jpg"
+        );
+    }
+
+    #[test]
+    fn test_submit_response_deserialization() {
+        let json = r#"{"request_id": "vid-123"}"#;
+        let resp: GrokVideoSubmitResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.request_id, "vid-123");
+    }
+
+    #[test]
+    fn test_result_response_deserialization() {
+        let json = r#"{"video": {"url": "https://example.com/video.mp4"}}"#;
+        let resp: GrokVideoResultResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.video.url, "https://example.com/video.mp4");
+    }
 }

@@ -16,6 +16,20 @@ const MAX_CONCURRENCY: u32 = 5;
 /// Default concurrent generations.
 const DEFAULT_CONCURRENCY: u32 = 3;
 
+/// Validates that an output path is safe to write to.
+///
+/// Rejects paths containing directory traversal (`..`) components
+/// to prevent writing outside the intended directory.
+fn validate_output_path(path: &str) -> std::result::Result<(), String> {
+    let path = std::path::Path::new(path);
+    for component in path.components() {
+        if matches!(component, std::path::Component::ParentDir) {
+            return Err("Path must not contain '..' components".into());
+        }
+    }
+    Ok(())
+}
+
 /// JSON-RPC 2.0 request.
 #[derive(Debug, Deserialize)]
 struct JsonRpcRequest {
@@ -236,7 +250,7 @@ impl McpServer {
             Tool {
                 name: "generate_image",
                 description:
-                    "Generate an image from a text prompt using AI (Flux, Gemini, or Grok)",
+                    "Generate an image from a text prompt using AI (Flux, Gemini, Grok, or OpenAI)",
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -246,7 +260,7 @@ impl McpServer {
                         },
                         "provider": {
                             "type": "string",
-                            "enum": ["flux", "gemini", "grok"],
+                            "enum": ["flux", "gemini", "grok", "openai"],
                             "description": "AI provider to use (default: gemini)"
                         },
                         "output_path": {
@@ -272,7 +286,7 @@ impl McpServer {
                         },
                         "model": {
                             "type": "string",
-                            "description": "Model variant (gemini: nano-banana, nano-banana-pro; flux: flux-pro-1.1, flux-pro, flux-dev; grok: grok-imagine)"
+                            "description": "Model variant (gemini: nano-banana, nano-banana-pro; flux: flux-pro-1.1, flux-pro-1.1-ultra, flux-pro, flux-dev, flux-2-max, flux-2-pro, flux-2-flex, flux-2-klein-4b, flux-2-klein-9b, flux-kontext-pro, flux-kontext-max, flux-fill-pro, flux-expand-pro; grok: grok-imagine; openai: gpt-image-1, dall-e-3)"
                         },
                         "count": {
                             "type": "integer",
@@ -296,7 +310,8 @@ impl McpServer {
             },
             Tool {
                 name: "generate_video",
-                description: "Generate a video from a text prompt using AI (Grok or Veo)",
+                description:
+                    "Generate a video from a text prompt using AI (Grok, OpenAI/Sora, or Veo)",
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -306,7 +321,7 @@ impl McpServer {
                         },
                         "provider": {
                             "type": "string",
-                            "enum": ["grok", "veo"],
+                            "enum": ["grok", "openai", "veo"],
                             "description": "AI provider to use (default: grok)"
                         },
                         "output_path": {
@@ -358,6 +373,13 @@ impl McpServer {
                 return JsonRpcResponse::error(id, -32602, format!("Invalid parameters: {}", e));
             }
         };
+
+        // Validate output path safety
+        if let Some(path) = &params.output_path {
+            if let Err(msg) = validate_output_path(path) {
+                return JsonRpcResponse::error(id, -32602, &msg);
+            }
+        }
 
         // Validate provider/param compatibility
         let provider_name = params.provider.as_deref().unwrap_or("gemini");
@@ -493,10 +515,16 @@ impl McpServer {
             }
         };
 
+        // Validate output path safety
+        if let Err(msg) = validate_output_path(&params.output_path) {
+            return JsonRpcResponse::error(id, -32602, &msg);
+        }
+
         let provider_name = params.provider.as_deref().unwrap_or("grok");
 
         let result = match provider_name {
             "grok" => generate_video_with_grok(&params).await,
+            "openai" => generate_video_with_openai(&params).await,
             "veo" => generate_video_with_veo(&params).await,
             _ => Err(format!("Unknown video provider: {}", provider_name)),
         };
@@ -544,6 +572,7 @@ async fn generate_single(
         "flux" => generate_with_flux(request, model).await?,
         "gemini" => generate_with_gemini(request, model).await?,
         "grok" => generate_with_grok(request, model).await?,
+        "openai" => generate_with_openai(request, model).await?,
         _ => return Err(format!("Unknown provider: {}", provider)),
     };
 
@@ -589,8 +618,18 @@ async fn generate_with_flux(
     if let Some(m) = model {
         let flux_model = match m {
             "flux-pro-1.1" => FluxModel::FluxPro11,
+            "flux-pro-1.1-ultra" => FluxModel::FluxPro11Ultra,
             "flux-pro" => FluxModel::FluxPro,
             "flux-dev" => FluxModel::FluxDev,
+            "flux-2-max" | "flux2-max" => FluxModel::Flux2Max,
+            "flux-2-pro" | "flux2-pro" => FluxModel::Flux2Pro,
+            "flux-2-flex" | "flux2-flex" => FluxModel::Flux2Flex,
+            "flux-2-klein-4b" | "flux2-klein-4b" => FluxModel::Flux2Klein4B,
+            "flux-2-klein-9b" | "flux2-klein-9b" => FluxModel::Flux2Klein9B,
+            "flux-kontext-pro" | "kontext-pro" => FluxModel::KontextPro,
+            "flux-kontext-max" | "kontext-max" => FluxModel::KontextMax,
+            "flux-fill-pro" | "fill-pro" => FluxModel::FillPro,
+            "flux-expand-pro" | "expand-pro" => FluxModel::ExpandPro,
             _ => return Err(format!("Unknown Flux model: {}", m)),
         };
         builder = builder.model(flux_model);
@@ -667,6 +706,37 @@ async fn generate_with_grok(
     _model: Option<&str>,
 ) -> Result<GeneratedImage, String> {
     Err("Grok provider not enabled".to_string())
+}
+
+#[cfg(feature = "openai-image")]
+async fn generate_with_openai(
+    request: &GenerationRequest,
+    model: Option<&str>,
+) -> Result<GeneratedImage, String> {
+    use crate::image::ImageProvider;
+    use crate::{OpenAiImageModel, OpenAiImageProvider};
+
+    let mut builder = OpenAiImageProvider::builder();
+
+    if let Some(m) = model {
+        let openai_model = match m {
+            "gpt-image-1" => OpenAiImageModel::GptImage1,
+            "dall-e-3" => OpenAiImageModel::DallE3,
+            _ => return Err(format!("Unknown OpenAI model: {}", m)),
+        };
+        builder = builder.model(openai_model);
+    }
+
+    let provider = builder.build().map_err(|e| e.to_string())?;
+    provider.generate(request).await.map_err(|e| e.to_string())
+}
+
+#[cfg(not(feature = "openai-image"))]
+async fn generate_with_openai(
+    _request: &GenerationRequest,
+    _model: Option<&str>,
+) -> Result<GeneratedImage, String> {
+    Err("OpenAI image provider not enabled".to_string())
 }
 
 fn parse_aspect_ratio(s: &str) -> Option<crate::image::AspectRatio> {
@@ -782,6 +852,49 @@ async fn generate_video_with_veo(
     Err("Veo video provider not enabled".to_string())
 }
 
+#[cfg(feature = "openai-video")]
+async fn generate_video_with_openai(
+    params: &GenerateVideoParams,
+) -> Result<VideoGenerationResult, String> {
+    use crate::video::{VideoGenerationRequest, VideoProvider};
+    use crate::SoraProvider;
+
+    let mut request = VideoGenerationRequest::new(&params.prompt);
+
+    if let Some(d) = params.duration {
+        request = request.with_duration(d);
+    }
+    if let Some(ar) = &params.aspect_ratio {
+        request = request.with_aspect_ratio(ar.clone());
+    }
+
+    let provider = SoraProvider::builder().build().map_err(|e| e.to_string())?;
+
+    let video = provider
+        .generate(&request)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    video.save(&params.output_path).map_err(|e| e.to_string())?;
+
+    Ok(VideoGenerationResult {
+        success: true,
+        provider: "openai".to_string(),
+        output_path: params.output_path.clone(),
+        size_bytes: video.size(),
+        model: video.metadata.model,
+        duration_ms: video.metadata.duration_ms,
+        video_duration_secs: video.metadata.video_duration_secs,
+    })
+}
+
+#[cfg(not(feature = "openai-video"))]
+async fn generate_video_with_openai(
+    _params: &GenerateVideoParams,
+) -> Result<VideoGenerationResult, String> {
+    Err("OpenAI video (Sora) provider not enabled".to_string())
+}
+
 /// Validate image generation params against provider capabilities.
 fn validate_image_params(provider: &str, params: &GenerateImageParams) -> Result<(), String> {
     match provider {
@@ -803,6 +916,11 @@ fn validate_image_params(provider: &str, params: &GenerateImageParams) -> Result
                 return Err("Grok does not support seed".to_string());
             }
         }
+        "openai" => {
+            if params.seed.is_some() {
+                return Err("OpenAI does not support seed".to_string());
+            }
+        }
         "flux" => {
             // Flux supports all options
         }
@@ -816,5 +934,261 @@ fn validate_image_params(provider: &str, params: &GenerateImageParams) -> Result
 impl Default for McpServer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_server() -> McpServer {
+        McpServer::new()
+    }
+
+    #[tokio::test]
+    async fn test_initialize() {
+        let mut server = make_server();
+        let resp = server
+            .handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#)
+            .await
+            .unwrap();
+
+        assert!(resp.error.is_none());
+        let result = resp.result.unwrap();
+        assert_eq!(result["protocolVersion"], "2024-11-05");
+        assert_eq!(result["serverInfo"]["name"], "genviz");
+        assert!(server.initialized);
+    }
+
+    #[tokio::test]
+    async fn test_ping() {
+        let mut server = make_server();
+        let resp = server
+            .handle_message(r#"{"jsonrpc":"2.0","id":2,"method":"ping","params":{}}"#)
+            .await
+            .unwrap();
+
+        assert!(resp.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_tools_list() {
+        let server = make_server();
+        let resp = server.handle_tools_list(json!(1));
+
+        let result = resp.result.unwrap();
+        let tools = result["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2);
+
+        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert!(names.contains(&"generate_image"));
+        assert!(names.contains(&"generate_video"));
+    }
+
+    #[tokio::test]
+    async fn test_invalid_jsonrpc_version() {
+        let mut server = make_server();
+        let resp = server
+            .handle_message(r#"{"jsonrpc":"1.0","id":1,"method":"ping","params":{}}"#)
+            .await
+            .unwrap();
+
+        assert!(resp.error.is_some());
+        assert_eq!(resp.error.unwrap().code, -32600);
+    }
+
+    #[tokio::test]
+    async fn test_parse_error() {
+        let mut server = make_server();
+        let resp = server.handle_message("not json").await.unwrap();
+
+        assert!(resp.error.is_some());
+        assert_eq!(resp.error.unwrap().code, -32700);
+    }
+
+    #[tokio::test]
+    async fn test_method_not_found() {
+        let mut server = make_server();
+        let resp = server
+            .handle_message(r#"{"jsonrpc":"2.0","id":1,"method":"nonexistent","params":{}}"#)
+            .await
+            .unwrap();
+
+        assert!(resp.error.is_some());
+        assert_eq!(resp.error.unwrap().code, -32601);
+    }
+
+    #[tokio::test]
+    async fn test_initialized_notification_returns_none() {
+        let mut server = make_server();
+        let resp = server
+            .handle_message(r#"{"jsonrpc":"2.0","method":"initialized","params":{}}"#)
+            .await;
+
+        assert!(resp.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_unknown_tool() {
+        let server = make_server();
+        let resp = server
+            .handle_tools_call(
+                json!(1),
+                &json!({"name": "nonexistent_tool", "arguments": {}}),
+            )
+            .await;
+
+        assert!(resp.error.is_some());
+        assert_eq!(resp.error.unwrap().code, -32602);
+    }
+
+    #[tokio::test]
+    async fn test_generate_image_invalid_params() {
+        let server = make_server();
+        let resp = server
+            .generate_image(json!(1), json!({"not_prompt": "missing required field"}))
+            .await;
+
+        assert!(resp.error.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_generate_image_unknown_provider() {
+        let server = make_server();
+        let resp = server
+            .generate_image(json!(1), json!({"prompt": "test", "provider": "unknown"}))
+            .await;
+
+        assert!(resp.error.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_generate_image_count_requires_placeholder() {
+        let server = make_server();
+        let resp = server
+            .generate_image(
+                json!(1),
+                json!({"prompt": "test", "count": 3, "output_path": "/tmp/out.png"}),
+            )
+            .await;
+
+        assert!(resp.error.is_some());
+        assert!(resp.error.unwrap().message.contains("{n}"));
+    }
+
+    #[test]
+    fn test_validate_image_params_gemini_rejects_aspect_ratio() {
+        let params = GenerateImageParams {
+            prompt: "test".into(),
+            provider: None,
+            output_path: None,
+            width: None,
+            height: None,
+            seed: None,
+            aspect_ratio: Some("16:9".into()),
+            model: None,
+            count: None,
+            concurrency: None,
+            input_image: None,
+        };
+        assert!(validate_image_params("gemini", &params).is_err());
+    }
+
+    #[test]
+    fn test_validate_image_params_grok_rejects_seed() {
+        let params = GenerateImageParams {
+            prompt: "test".into(),
+            provider: None,
+            output_path: None,
+            width: None,
+            height: None,
+            seed: Some(42),
+            aspect_ratio: None,
+            model: None,
+            count: None,
+            concurrency: None,
+            input_image: None,
+        };
+        assert!(validate_image_params("grok", &params).is_err());
+    }
+
+    #[test]
+    fn test_validate_image_params_flux_accepts_all() {
+        let params = GenerateImageParams {
+            prompt: "test".into(),
+            provider: None,
+            output_path: None,
+            width: Some(1024),
+            height: Some(768),
+            seed: Some(42),
+            aspect_ratio: Some("16:9".into()),
+            model: None,
+            count: None,
+            concurrency: None,
+            input_image: None,
+        };
+        assert!(validate_image_params("flux", &params).is_ok());
+    }
+
+    #[test]
+    fn test_parse_aspect_ratio() {
+        use crate::image::AspectRatio;
+        assert_eq!(parse_aspect_ratio("1:1"), Some(AspectRatio::Square));
+        assert_eq!(parse_aspect_ratio("16:9"), Some(AspectRatio::Landscape));
+        assert_eq!(parse_aspect_ratio("9:16"), Some(AspectRatio::Portrait));
+        assert_eq!(parse_aspect_ratio("4:3"), Some(AspectRatio::Standard));
+        assert_eq!(
+            parse_aspect_ratio("3:4"),
+            Some(AspectRatio::StandardPortrait)
+        );
+        assert_eq!(parse_aspect_ratio("21:9"), Some(AspectRatio::Ultrawide));
+        assert_eq!(parse_aspect_ratio("invalid"), None);
+    }
+
+    #[test]
+    fn test_validate_output_path_rejects_traversal() {
+        assert!(validate_output_path("../etc/passwd").is_err());
+        assert!(validate_output_path("/tmp/../etc/passwd").is_err());
+        assert!(validate_output_path("foo/../../bar").is_err());
+    }
+
+    #[test]
+    fn test_validate_output_path_accepts_safe_paths() {
+        assert!(validate_output_path("/tmp/output.png").is_ok());
+        assert!(validate_output_path("output.png").is_ok());
+        assert!(validate_output_path("./images/output.png").is_ok());
+        assert!(validate_output_path("images/sub/output.png").is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_generate_image_rejects_path_traversal() {
+        let server = make_server();
+        let resp = server
+            .generate_image(
+                json!(1),
+                json!({"prompt": "test", "output_path": "../etc/evil.png"}),
+            )
+            .await;
+
+        assert!(resp.error.is_some());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        assert!(err.message.contains(".."));
+    }
+
+    #[tokio::test]
+    async fn test_generate_video_rejects_path_traversal() {
+        let server = make_server();
+        let resp = server
+            .generate_video(
+                json!(1),
+                json!({"prompt": "test", "output_path": "../etc/evil.mp4"}),
+            )
+            .await;
+
+        assert!(resp.error.is_some());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        assert!(err.message.contains(".."));
     }
 }

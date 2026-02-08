@@ -1,6 +1,6 @@
 //! Grok Imagine (xAI) image generation provider.
 
-use crate::error::{sanitize_error_message, GenVizError, Result};
+use crate::error::{parse_retry_after, sanitize_error_message, GenVizError, Result};
 use crate::image::provider::ImageProvider;
 use crate::image::types::{
     GeneratedImage, GenerationMetadata, GenerationRequest, ImageFormat, ImageProviderKind,
@@ -16,11 +16,13 @@ const EDITS_URL: &str = "https://api.x.ai/v1/images/edits";
 /// Grok Imagine model variants.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum GrokModel {
+    /// Grok Imagine - xAI's image generation model.
     #[default]
     GrokImagine,
 }
 
 impl GrokModel {
+    /// Returns the API model identifier string.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::GrokImagine => "grok-imagine-image",
@@ -36,20 +38,24 @@ pub struct GrokProviderBuilder {
 }
 
 impl GrokProviderBuilder {
+    /// Creates a new builder with default settings.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Sets the API key. Falls back to `XAI_API_KEY` env var.
     pub fn api_key(mut self, key: impl Into<String>) -> Self {
         self.api_key = Some(key.into());
         self
     }
 
+    /// Sets the Grok model variant.
     pub fn model(mut self, model: GrokModel) -> Self {
         self.model = model;
         self
     }
 
+    /// Builds the provider, resolving the API key.
     pub fn build(self) -> Result<GrokProvider> {
         let api_key = self
             .api_key
@@ -74,19 +80,41 @@ pub struct GrokProvider {
 }
 
 impl GrokProvider {
+    /// Creates a new `GrokProviderBuilder`.
     pub fn builder() -> GrokProviderBuilder {
         GrokProviderBuilder::new()
     }
 
-    fn parse_error(&self, status: u16, text: &str) -> GenVizError {
+    fn parse_error(
+        &self,
+        status: u16,
+        text: &str,
+        headers: &reqwest::header::HeaderMap,
+    ) -> GenVizError {
         let text = sanitize_error_message(text);
+        if status == 402 {
+            return GenVizError::Billing(
+                "Insufficient credits. Check your xAI billing at console.x.ai".into(),
+            );
+        }
+        if status == 422 {
+            return GenVizError::InvalidRequest(text);
+        }
         if status == 429 {
-            return GenVizError::RateLimited { retry_after: None };
+            let retry_after = parse_retry_after(headers).map(std::time::Duration::from_secs);
+            return GenVizError::RateLimited { retry_after };
         }
         if status == 401 || status == 403 {
             return GenVizError::Auth(text);
         }
-        if text.contains("safety") || text.contains("blocked") || text.contains("content_policy") {
+        let lower = text.to_lowercase();
+        if lower.contains("safety")
+            || lower.contains("blocked")
+            || lower.contains("content_policy")
+            || lower.contains("moderated")
+            || lower.contains("content moderated")
+            || lower.contains("try a different idea")
+        {
             return GenVizError::ContentBlocked(text);
         }
         GenVizError::Api {
@@ -128,8 +156,9 @@ impl ImageProvider for GrokProvider {
 
         let status = response.status();
         if !status.is_success() {
+            let headers = response.headers().clone();
             let text = response.text().await.unwrap_or_default();
-            return Err(self.parse_error(status.as_u16(), &text));
+            return Err(self.parse_error(status.as_u16(), &text, &headers));
         }
 
         let grok_response: GrokResponse = response.json().await?;
@@ -138,9 +167,10 @@ impl ImageProvider for GrokProvider {
             .data
             .into_iter()
             .next()
-            .ok_or_else(|| GenVizError::Api {
-                status: 500,
-                message: "No images in response".into(),
+            .ok_or_else(|| {
+                GenVizError::UnexpectedResponse(
+                    "No images in Grok response. The model may not have generated output for this prompt.".into(),
+                )
             })?;
 
         // Handle b64_json, image (edit endpoint), or url response formats
@@ -164,10 +194,9 @@ impl ImageProvider for GrokProvider {
             }
             img_response.bytes().await?.to_vec()
         } else {
-            return Err(GenVizError::Api {
-                status: 500,
-                message: "Response contained no image data".into(),
-            });
+            return Err(GenVizError::UnexpectedResponse(
+                "Grok response contained no image data".into(),
+            ));
         };
 
         let duration_ms = start.elapsed().as_millis() as u64;
@@ -191,10 +220,20 @@ impl ImageProvider for GrokProvider {
     }
 
     async fn health_check(&self) -> Result<()> {
-        if self.api_key.starts_with("xai-") {
-            Ok(())
-        } else {
-            Err(GenVizError::Auth("Invalid API key format".into()))
+        let response = self
+            .client
+            .get("https://api.x.ai/v1/models")
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .send()
+            .await?;
+
+        match response.status().as_u16() {
+            401 | 403 => Err(GenVizError::Auth("Invalid API key".into())),
+            s if !(200..300).contains(&s) => Err(GenVizError::Api {
+                status: s,
+                message: "Health check failed".into(),
+            }),
+            _ => Ok(()),
         }
     }
 }
@@ -285,4 +324,88 @@ struct GrokImageData {
     /// Base64-encoded image from edit endpoint
     #[serde(default)]
     image: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_grok_model_as_str() {
+        assert_eq!(GrokModel::GrokImagine.as_str(), "grok-imagine-image");
+    }
+
+    #[test]
+    fn test_builder_with_explicit_key() {
+        let provider = GrokProviderBuilder::new().api_key("xai-test").build();
+        assert!(provider.is_ok());
+    }
+
+    #[test]
+    fn test_request_construction_basic() {
+        let req = GenerationRequest::new("A city");
+        let grok_req = GrokRequest::from_generation_request(&req, &GrokModel::GrokImagine);
+
+        assert_eq!(grok_req.prompt, "A city");
+        assert_eq!(grok_req.model, "grok-imagine-image");
+        assert_eq!(grok_req.n, 1);
+        assert_eq!(grok_req.response_format, "b64_json");
+        assert!(grok_req.aspect_ratio.is_none());
+    }
+
+    #[test]
+    fn test_request_construction_with_aspect_ratio() {
+        let req =
+            GenerationRequest::new("A city").with_aspect_ratio(crate::image::AspectRatio::Portrait);
+        let grok_req = GrokRequest::from_generation_request(&req, &GrokModel::GrokImagine);
+
+        assert_eq!(grok_req.aspect_ratio.as_deref(), Some("9:16"));
+    }
+
+    #[test]
+    fn test_edit_request_construction() {
+        let png_data = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0];
+        let req = GenerationRequest::new("Edit this").with_input_image(png_data);
+        let edit_req = GrokEditRequest::from_generation_request(&req, &GrokModel::GrokImagine);
+
+        assert_eq!(edit_req.prompt, "Edit this");
+        assert!(edit_req.image.url.starts_with("data:image/png;base64,"));
+    }
+
+    #[test]
+    fn test_response_deserialization_b64() {
+        let json = r#"{"data": [{"b64_json": "AQID"}]}"#;
+        let resp: GrokResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.data.len(), 1);
+        assert_eq!(resp.data[0].b64_json.as_deref(), Some("AQID"));
+        assert!(resp.data[0].url.is_none());
+    }
+
+    #[test]
+    fn test_response_deserialization_url() {
+        let json = r#"{"data": [{"url": "https://example.com/img.png"}]}"#;
+        let resp: GrokResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            resp.data[0].url.as_deref(),
+            Some("https://example.com/img.png")
+        );
+        assert!(resp.data[0].b64_json.is_none());
+    }
+
+    #[test]
+    fn test_response_deserialization_edit() {
+        let json = r#"{"data": [{"image": "AQID"}]}"#;
+        let resp: GrokResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.data[0].image.as_deref(), Some("AQID"));
+    }
+
+    #[test]
+    fn test_request_serialization_skips_none_aspect_ratio() {
+        let req = GenerationRequest::new("A city");
+        let grok_req = GrokRequest::from_generation_request(&req, &GrokModel::GrokImagine);
+        let json = serde_json::to_value(&grok_req).unwrap();
+
+        assert!(json.get("aspect_ratio").is_none());
+        assert!(json.get("prompt").is_some());
+    }
 }

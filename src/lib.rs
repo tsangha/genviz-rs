@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! GenViz - Unified AI media generation (image + video).
 //!
 //! This crate provides a unified interface for generating images and videos
@@ -40,9 +41,11 @@
 //! - `flux-image`: Flux (Black Forest Labs)
 //! - `gemini-image`: Gemini (Google)
 //! - `grok-image`: Grok Imagine (xAI)
+//! - `openai-image`: OpenAI (gpt-image-1, dall-e-3)
 //!
 //! ## Video Generation
 //! - `grok-video`: Grok Imagine Video (xAI)
+//! - `openai-video`: Sora (OpenAI)
 //! - `veo`: Veo (Google)
 //!
 //! ## Meta Features
@@ -59,6 +62,7 @@ pub mod image;
 pub mod video;
 
 #[cfg(feature = "cli")]
+#[doc(hidden)]
 pub mod mcp;
 
 // Re-export error types at crate root
@@ -80,6 +84,9 @@ pub use image::providers::{GeminiModel, GeminiProvider, GeminiProviderBuilder};
 #[cfg(feature = "grok-image")]
 pub use image::providers::{GrokModel, GrokProvider, GrokProviderBuilder};
 
+#[cfg(feature = "openai-image")]
+pub use image::providers::{OpenAiImageModel, OpenAiImageProvider, OpenAiImageProviderBuilder};
+
 // Re-export commonly used video types
 #[cfg(feature = "video")]
 pub use video::{
@@ -89,6 +96,9 @@ pub use video::{
 
 #[cfg(feature = "grok-video")]
 pub use video::providers::{GrokVideoModel, GrokVideoProvider, GrokVideoProviderBuilder};
+
+#[cfg(feature = "openai-video")]
+pub use video::providers::{SoraModel, SoraProvider, SoraProviderBuilder};
 
 #[cfg(feature = "veo")]
 pub use video::providers::{VeoModel, VeoProvider, VeoProviderBuilder};
@@ -114,8 +124,14 @@ pub mod prelude {
     #[cfg(feature = "grok-image")]
     pub use crate::image::providers::GrokProvider;
 
+    #[cfg(feature = "openai-image")]
+    pub use crate::image::providers::OpenAiImageProvider;
+
     #[cfg(feature = "grok-video")]
     pub use crate::video::providers::GrokVideoProvider;
+
+    #[cfg(feature = "openai-video")]
+    pub use crate::video::providers::SoraProvider;
 
     #[cfg(feature = "veo")]
     pub use crate::video::providers::VeoProvider;

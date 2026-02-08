@@ -1,31 +1,41 @@
 [package]
 name = "genviz"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
-description = "Unified AI media generation (image + video) via Flux, Gemini, and Grok APIs"
+description = "Unified AI media generation (image + video) via Flux, Gemini, Grok, OpenAI, and Sora APIs"
 license = "MIT"
-repository = "https://github.com/anthropics/genviz-rs"
+authors = ["Taj Sangha"]
+repository = "https://github.com/tsangha/genviz-rs"
+readme = "README.md"
+keywords = ["ai", "image-generation", "video-generation", "openai", "gemini"]
+categories = ["multimedia::images", "multimedia::video", "api-bindings"]
+rust-version = "1.75"
+homepage = "https://github.com/tsangha/genviz-rs"
+documentation = "https://docs.rs/genviz"
+exclude = [".github/", ".claude/", ".env", ".env.*", "CLAUDE.md"]
 
 [features]
 default = ["image", "video"]
 
 # Image generation providers
-image = ["flux-image", "gemini-image", "grok-image"]
+image = ["flux-image", "gemini-image", "grok-image", "openai-image"]
 flux-image = ["dep:base64"]
 gemini-image = ["dep:base64"]
 grok-image = ["dep:base64"]
+openai-image = ["dep:base64"]
 
 # Video generation providers
-video = ["grok-video", "veo"]
+video = ["grok-video", "veo", "openai-video"]
 grok-video = ["dep:base64"]
 veo = ["dep:base64"]
+openai-video = ["dep:base64"]
 
 # CLI binary
-cli = ["dep:clap", "dep:anyhow", "dep:base64", "image", "video"]
+cli = ["dep:clap", "dep:anyhow", "dep:tracing-subscriber", "dep:base64", "image", "video"]
 
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "multipart"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
@@ -34,8 +44,15 @@ tracing = "0.1"
 base64 = { version = "0.22", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
 anyhow = { version = "1", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"], optional = true }
 
 [[bin]]
 name = "genviz"
 path = "src/bin/genviz.rs"
 required-features = ["cli"]
+
+[lints.rust]
+missing_docs = "warn"
+
+[lints.clippy]
+all = "warn"

@@ -6,6 +6,8 @@ mod flux;
 mod gemini;
 #[cfg(feature = "grok-image")]
 mod grok;
+#[cfg(feature = "openai-image")]
+mod openai;
 
 #[cfg(feature = "flux-image")]
 pub use flux::{FluxModel, FluxProvider, FluxProviderBuilder};
@@ -15,3 +17,6 @@ pub use gemini::{GeminiModel, GeminiProvider, GeminiProviderBuilder};
 
 #[cfg(feature = "grok-image")]
 pub use grok::{GrokModel, GrokProvider, GrokProviderBuilder};
+
+#[cfg(feature = "openai-image")]
+pub use openai::{OpenAiImageModel, OpenAiImageProvider, OpenAiImageProviderBuilder};

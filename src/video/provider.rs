@@ -18,6 +18,7 @@ pub trait VideoProvider: Send + Sync {
         match self.kind() {
             VideoProviderKind::Grok => "Grok Imagine Video (xAI)",
             VideoProviderKind::Veo => "Veo (Google)",
+            VideoProviderKind::OpenAI => "Sora (OpenAI)",
         }
     }
 
