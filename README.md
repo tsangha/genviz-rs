@@ -5,26 +5,159 @@
 [![docs.rs](https://docs.rs/genviz/badge.svg)](https://docs.rs/genviz)
 [![License: MIT](https://img.shields.io/crates/l/genviz.svg)](LICENSE)
 
-One interface for AI image and video generation. Write once, swap providers freely.
+Generate images and videos with AI. Works as a **CLI**, a **Rust library**, or an **MCP server** for AI agents like Claude Code. Six providers, one interface, no lock-in.
 
-```rust
-use genviz::{GeminiProvider, GenerationRequest, ImageProvider};
+### Command line
 
-let provider = GeminiProvider::builder().build()?;
-let image = provider.generate(&GenerationRequest::new("A golden retriever in snow")).await?;
-image.save("puppy.png")?;
+```bash
+cargo install genviz --features cli
+export GOOGLE_API_KEY="..."  # or BFL_API_KEY, XAI_API_KEY, OPENAI_API_KEY
 ```
 
-Switch to Flux, Grok, or OpenAI by changing one line — your request code stays the same.
+```bash
+$ genviz image "A cat wearing sunglasses" -o cat.png
+Generated cat.png (1024x1024, 1.2MB) via gemini in 3.4s
 
-## Why genviz
+$ genviz image "Make it a painting" -o painting.png --input cat.png
+Generated painting.png (1024x1024, 980KB) via gemini in 2.8s
 
-- **Unified trait API** across 6 providers — no vendor lock-in
-- **Image generation + editing** with text prompts (all providers)
-- **Video generation** via Grok, Sora, and Veo
-- **Typed error handling** with retryability detection, rate limit parsing, and billing errors
-- **Feature-flag granularity** — compile only the providers you use
-- **CLI and MCP server** included for scripting and AI agent integration
+$ genviz video "Ocean waves crashing on rocks at sunset" -o waves.mp4 -p grok
+Generated waves.mp4 (5s, 2.1MB) via grok in 12.3s
+```
+
+### Claude Code / MCP
+
+```bash
+cargo install genviz --features cli
+```
+
+Add to `~/.claude/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "genviz": {
+      "command": "genviz",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Then just ask Claude: *"Generate an image of a sunset over mountains"* — it discovers available providers, models, and capabilities automatically via the `list_providers` tool.
+
+### Rust library
+
+```rust
+use genviz::prelude::*;
+
+let provider = GeminiProvider::builder().build()?;
+let image = provider.generate(&GenerationRequest::new("A mountain lake at dawn")).await?;
+image.save("lake.png")?;
+```
+
+Swap `GeminiProvider` for `FluxProvider`, `GrokProvider`, or `OpenAiImageProvider` — request code stays the same.
+
+---
+
+Works with [Gemini](https://aistudio.google.com/apikey), [Flux](https://api.bfl.ai) (13 models), [Grok](https://x.ai), [OpenAI](https://platform.openai.com) (gpt-image-1, DALL-E 3), [Sora](https://platform.openai.com), and [Veo](https://aistudio.google.com/apikey). You only need an API key for the provider you want to use.
+
+## CLI
+
+```bash
+# Generate images
+genviz image "A sunset over mountains" -o sunset.png
+genviz image "A portrait" -o portrait.png -p openai --model dall-e-3
+genviz image "A city skyline" -o city.png -p flux --model flux-2-max --aspect-ratio 16:9
+
+# Edit existing images
+genviz image "Change the sky to sunset" -o edited.png --input photo.png
+genviz image "Add a hat" -o hat.png -p flux --model flux-kontext-pro --input portrait.jpg
+
+# Generate videos
+genviz video "Ocean waves" -o waves.mp4 -p grok --duration 5
+genviz video "A cat jumping" -o cat.mp4 -p openai
+genviz video "Timelapse of clouds" -o clouds.mp4 -p veo
+
+# See what's available
+genviz providers
+```
+
+## Rust Library
+
+For use in your own Rust projects:
+
+```toml
+[dependencies]
+genviz = "0.2"
+```
+
+```rust
+use genviz::prelude::*;
+
+// Generate an image — swap GeminiProvider for FluxProvider, GrokProvider, etc.
+let provider = GeminiProvider::builder().build()?;
+let image = provider.generate(&GenerationRequest::new("A mountain lake at dawn")).await?;
+image.save("lake.png")?;
+
+// Edit an existing image
+let input = std::fs::read("photo.png")?;
+let edited = provider
+    .generate(&GenerationRequest::new("Make it sunset").with_input_image(input))
+    .await?;
+
+// Generate a video
+let video_provider = GrokVideoProvider::builder().build()?;
+let video = video_provider
+    .generate(&VideoGenerationRequest::new("Ocean waves").with_duration(5))
+    .await?;
+video.save("waves.mp4")?;
+```
+
+All providers implement the same `ImageProvider` / `VideoProvider` traits, so switching is a one-line change.
+
+<details>
+<summary>Feature flags</summary>
+
+All providers are enabled by default. To slim down compile times:
+
+```toml
+[dependencies]
+genviz = { version = "0.2", default-features = false, features = ["gemini-image", "grok-video"] }
+```
+
+| Flag | Default | What it enables |
+|------|---------|-----------------|
+| `flux-image` | yes | Flux (13 models) |
+| `gemini-image` | yes | Gemini |
+| `grok-image` | yes | Grok Imagine |
+| `openai-image` | yes | OpenAI (gpt-image-1, DALL-E 3) |
+| `grok-video` | yes | Grok video |
+| `openai-video` | yes | Sora |
+| `veo` | yes | Veo |
+| `cli` | no | CLI binary |
+
+</details>
+
+<details>
+<summary>Error handling</summary>
+
+Errors are typed and actionable:
+
+```rust
+use genviz::GenVizError;
+
+match provider.generate(&request).await {
+    Ok(image) => image.save("out.png")?,
+    Err(GenVizError::RateLimited { retry_after }) => { /* back off */ }
+    Err(GenVizError::ContentBlocked(reason)) => { /* prompt was rejected */ }
+    Err(GenVizError::Billing(msg)) => { /* account issue */ }
+    Err(e) if e.is_retryable() => { /* transient, safe to retry */ }
+    Err(e) => return Err(e.into()),
+}
+```
+
+</details>
 
 ## Providers
 
@@ -41,130 +174,9 @@ Switch to Flux, Grok, or OpenAI by changing one line — your request code stays
 
 | Provider | Env Var | Duration | Aspect Ratio | Image-to-Video |
 |----------|---------|----------|--------------|----------------|
-| Grok | `XAI_API_KEY` | 1–15s | yes | yes |
+| Grok | `XAI_API_KEY` | 1-15s | yes | yes |
 | [Sora](https://platform.openai.com) | `OPENAI_API_KEY` | yes | yes | - |
 | [Veo](https://aistudio.google.com/apikey) | `GOOGLE_API_KEY` | - | - | resolution control |
-
-## Getting Started
-
-Add to your `Cargo.toml`:
-
-```toml
-[dependencies]
-genviz = "0.2"
-```
-
-All image and video providers are enabled by default. To include only what you need:
-
-```toml
-[dependencies]
-genviz = { version = "0.2", default-features = false, features = ["gemini-image", "grok-video"] }
-```
-
-<details>
-<summary>All feature flags</summary>
-
-| Flag | Default | What it enables |
-|------|---------|-----------------|
-| `flux-image` | yes | Flux (13 models) |
-| `gemini-image` | yes | Gemini |
-| `grok-image` | yes | Grok Imagine |
-| `openai-image` | yes | OpenAI (gpt-image-1, DALL-E 3) |
-| `grok-video` | yes | Grok video |
-| `openai-video` | yes | Sora |
-| `veo` | yes | Veo |
-| `cli` | no | CLI binary |
-
-</details>
-
-Set the API key for your chosen provider as an environment variable, then:
-
-```rust
-use genviz::prelude::*;
-
-// Images — any provider, same interface
-let gemini = GeminiProvider::builder().build()?;
-let flux = FluxProvider::builder().model(FluxModel::Flux2Max).build()?;
-
-let request = GenerationRequest::new("A serene mountain lake at dawn")
-    .with_aspect_ratio(AspectRatio::Landscape)
-    .with_seed(42);
-
-let image = gemini.generate(&request).await?;
-image.save("lake.png")?;
-
-// Edit an existing image
-let input = std::fs::read("photo.png")?;
-let edit_request = GenerationRequest::new("Make it sunset")
-    .with_input_image(input);
-let edited = gemini.generate(&edit_request).await?;
-
-// Videos
-let video_provider = GrokVideoProvider::builder().build()?;
-let video = video_provider
-    .generate(&VideoGenerationRequest::new("Ocean waves crashing").with_duration(5))
-    .await?;
-video.save("waves.mp4")?;
-```
-
-## Error Handling
-
-Errors are typed and actionable — you can match on specific failure modes and decide whether to retry:
-
-```rust
-use genviz::GenVizError;
-
-match provider.generate(&request).await {
-    Ok(image) => image.save("out.png")?,
-    Err(GenVizError::RateLimited { retry_after }) => { /* back off */ }
-    Err(GenVizError::ContentBlocked(reason)) => { /* prompt was rejected */ }
-    Err(GenVizError::Billing(msg)) => { /* account issue */ }
-    Err(e) if e.is_retryable() => { /* transient failure, safe to retry */ }
-    Err(e) => return Err(e.into()),
-}
-```
-
-## CLI
-
-```bash
-cargo install genviz --features cli
-```
-
-```bash
-# Generate
-genviz image "A cat wearing sunglasses" -o cat.png
-genviz image "A sunset" -o sunset.png -p flux --model flux-2-max
-genviz video "Ocean waves" -o waves.mp4 -p grok --duration 5
-
-# Edit
-genviz image "Change the sofa to leather" -o edited.png --input living_room.png
-
-# List available providers
-genviz providers
-```
-
-## MCP Server
-
-Expose image and video generation as tools for Claude Code and other AI agents:
-
-```bash
-genviz mcp
-```
-
-Add to your Claude Code config (`~/.claude/mcp.json`):
-
-```json
-{
-  "mcpServers": {
-    "genviz": {
-      "command": "genviz",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-This gives AI agents access to `generate_image` and `generate_video` tools. See [docs.rs](https://docs.rs/genviz) for full tool schemas and parameters.
 
 ## Documentation
 
