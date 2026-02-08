@@ -59,13 +59,13 @@ jobs:
       - run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
 
   msrv:
-    name: MSRV (1.80)
+    name: MSRV (1.83)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.80"
+          toolchain: "1.83"
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --all-features
 
