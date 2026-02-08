@@ -1,316 +1,177 @@
-# genviz-rs
+# genviz
 
 [![CI](https://github.com/tsangha/genviz-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/tsangha/genviz-rs/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/genviz.svg)](https://crates.io/crates/genviz)
 [![docs.rs](https://docs.rs/genviz/badge.svg)](https://docs.rs/genviz)
 [![License: MIT](https://img.shields.io/crates/l/genviz.svg)](LICENSE)
 
-Unified Rust library for AI media generation (images and video) via multiple providers.
-
-## Features
-
-- **6 providers**: Flux, Gemini, Grok, OpenAI (gpt-image-1/dall-e-3), Sora, and Veo
-- **13 Flux models**: FLUX.1, FLUX.2, Kontext, Fill, Expand, Ultra variants
-- **Unified trait interface**: Same API regardless of provider
-- **Image editing**: Edit existing images with text prompts (all providers)
-- **Format validation**: Verify image magic bytes match claimed format
-- **Robust error handling**: Typed errors with retryability, billing detection, rate limit headers
-- **CLI included**: Generate images and videos from the command line
-- **MCP server**: Integrate with Claude Code and other AI agents
-
-## Installation
-
-```toml
-[dependencies]
-genviz = "0.2.0"
-```
-
-Feature flags:
-- `flux-image` (default) - Enable Flux image provider (13 models)
-- `gemini-image` (default) - Enable Gemini image provider
-- `grok-image` (default) - Enable Grok Imagine provider
-- `openai-image` (default) - Enable OpenAI image provider (gpt-image-1, dall-e-3)
-- `grok-video` (default) - Enable Grok video provider
-- `openai-video` (default) - Enable Sora video provider
-- `veo` (default) - Enable Veo video provider
-- `cli` - Build CLI binary
-
-## Quick Start
+One interface for AI image and video generation. Write once, swap providers freely.
 
 ```rust
 use genviz::{GeminiProvider, GenerationRequest, ImageProvider};
 
-#[tokio::main]
-async fn main() -> genviz::Result<()> {
-    // Uses GOOGLE_API_KEY env var
-    let provider = GeminiProvider::builder().build()?;
-
-    let request = GenerationRequest::new("A golden retriever puppy in snow");
-    let image = provider.generate(&request).await?;
-
-    image.save("puppy.png")?;
-    println!("Generated {} bytes", image.size());
-    Ok(())
-}
-```
-
-## Image Providers
-
-### Gemini (Google)
-
-```rust
-use genviz::{GeminiProvider, GeminiModel};
-
-// Nano Banana Pro (default, highest quality)
 let provider = GeminiProvider::builder().build()?;
-
-// Nano Banana (faster, cheaper)
-let provider = GeminiProvider::builder()
-    .model(GeminiModel::NanoBanana)
-    .build()?;
+let image = provider.generate(&GenerationRequest::new("A golden retriever in snow")).await?;
+image.save("puppy.png")?;
 ```
 
-Requires `GOOGLE_API_KEY` env var. Get one at [Google AI Studio](https://aistudio.google.com/apikey).
+Switch to Flux, Grok, or OpenAI by changing one line — your request code stays the same.
 
-### Flux (Black Forest Labs)
+## Why genviz
 
-```rust
-use genviz::{FluxProvider, FluxModel};
+- **Unified trait API** across 6 providers — no vendor lock-in
+- **Image generation + editing** with text prompts (all providers)
+- **Video generation** via Grok, Sora, and Veo
+- **Typed error handling** with retryability detection, rate limit parsing, and billing errors
+- **Feature-flag granularity** — compile only the providers you use
+- **CLI and MCP server** included for scripting and AI agent integration
 
-// Flux Pro 1.1 (default)
-let provider = FluxProvider::builder().build()?;
+## Providers
 
-// FLUX.2 Max (latest, editing + generation)
-let provider = FluxProvider::builder()
-    .model(FluxModel::Flux2Max)
-    .build()?;
+### Images
 
-// Kontext Pro (context-aware editing)
-let provider = FluxProvider::builder()
-    .model(FluxModel::KontextPro)
-    .build()?;
+| Provider | Models | Env Var | Editing | Aspect Ratio | Seed |
+|----------|--------|---------|---------|--------------|------|
+| [Gemini](https://aistudio.google.com/apikey) | `NanoBanana`, `NanoBananaPro` | `GOOGLE_API_KEY` | yes | - | yes |
+| [Flux](https://api.bfl.ai) | 13 models (Pro, Ultra, Kontext, Fill, Expand) | `BFL_API_KEY` | yes | yes | yes |
+| [Grok](https://x.ai) | `GrokImagine` | `XAI_API_KEY` | yes | yes | - |
+| [OpenAI](https://platform.openai.com) | `GptImage1`, `DallE3` | `OPENAI_API_KEY` | yes | yes | - |
+
+### Videos
+
+| Provider | Env Var | Duration | Aspect Ratio | Image-to-Video |
+|----------|---------|----------|--------------|----------------|
+| Grok | `XAI_API_KEY` | 1–15s | yes | yes |
+| [Sora](https://platform.openai.com) | `OPENAI_API_KEY` | yes | yes | - |
+| [Veo](https://aistudio.google.com/apikey) | `GOOGLE_API_KEY` | - | - | resolution control |
+
+## Getting Started
+
+Add to your `Cargo.toml`:
+
+```toml
+[dependencies]
+genviz = "0.2"
 ```
 
-Available models: `FluxPro11`, `FluxPro11Ultra`, `FluxPro`, `FluxDev`, `Flux2Max`, `Flux2Pro`, `Flux2Flex`, `Flux2Klein4B`, `Flux2Klein9B`, `KontextPro`, `KontextMax`, `FillPro`, `ExpandPro`
+All image and video providers are enabled by default. To include only what you need:
 
-Requires `BFL_API_KEY` env var. Get one at [api.bfl.ai](https://api.bfl.ai).
-
-### Grok Imagine (xAI)
-
-```rust
-use genviz::GrokProvider;
-
-let provider = GrokProvider::builder().build()?;
+```toml
+[dependencies]
+genviz = { version = "0.2", default-features = false, features = ["gemini-image", "grok-video"] }
 ```
 
-Requires `XAI_API_KEY` env var. Get one at [x.ai](https://x.ai).
+<details>
+<summary>All feature flags</summary>
 
-### OpenAI (gpt-image-1, dall-e-3)
+| Flag | Default | What it enables |
+|------|---------|-----------------|
+| `flux-image` | yes | Flux (13 models) |
+| `gemini-image` | yes | Gemini |
+| `grok-image` | yes | Grok Imagine |
+| `openai-image` | yes | OpenAI (gpt-image-1, DALL-E 3) |
+| `grok-video` | yes | Grok video |
+| `openai-video` | yes | Sora |
+| `veo` | yes | Veo |
+| `cli` | no | CLI binary |
 
-```rust
-use genviz::{OpenAiImageProvider, OpenAiImageModel};
+</details>
 
-// gpt-image-1 (default)
-let provider = OpenAiImageProvider::builder().build()?;
-
-// DALL-E 3
-let provider = OpenAiImageProvider::builder()
-    .model(OpenAiImageModel::DallE3)
-    .build()?;
-```
-
-Requires `OPENAI_API_KEY` env var. Get one at [platform.openai.com](https://platform.openai.com).
-
-## Video Providers
-
-### Grok Imagine Video (xAI)
+Set the API key for your chosen provider as an environment variable, then:
 
 ```rust
-use genviz::{GrokVideoProvider, VideoGenerationRequest, VideoProvider};
+use genviz::prelude::*;
 
-let provider = GrokVideoProvider::builder().build()?;
-let request = VideoGenerationRequest::new("Ocean waves").with_duration(5);
-let video = provider.generate(&request).await?;
+// Images — any provider, same interface
+let gemini = GeminiProvider::builder().build()?;
+let flux = FluxProvider::builder().model(FluxModel::Flux2Max).build()?;
+
+let request = GenerationRequest::new("A serene mountain lake at dawn")
+    .with_aspect_ratio(AspectRatio::Landscape)
+    .with_seed(42);
+
+let image = gemini.generate(&request).await?;
+image.save("lake.png")?;
+
+// Edit an existing image
+let input = std::fs::read("photo.png")?;
+let edit_request = GenerationRequest::new("Make it sunset")
+    .with_input_image(input);
+let edited = gemini.generate(&edit_request).await?;
+
+// Videos
+let video_provider = GrokVideoProvider::builder().build()?;
+let video = video_provider
+    .generate(&VideoGenerationRequest::new("Ocean waves crashing").with_duration(5))
+    .await?;
 video.save("waves.mp4")?;
 ```
 
-### Sora (OpenAI)
-
-```rust
-use genviz::{SoraProvider, VideoGenerationRequest, VideoProvider};
-
-let provider = SoraProvider::builder().build()?;
-let request = VideoGenerationRequest::new("A cat jumping")
-    .with_duration(8)
-    .with_aspect_ratio("16:9");
-let video = provider.generate(&request).await?;
-video.save("cat.mp4")?;
-```
-
-Requires `OPENAI_API_KEY` env var.
-
-### Veo (Google)
-
-```rust
-use genviz::{VeoProvider, VideoGenerationRequest, VideoProvider};
-
-let provider = VeoProvider::builder().build()?;
-let request = VideoGenerationRequest::new("A timelapse of clouds")
-    .with_resolution("720p");
-let video = provider.generate(&request).await?;
-video.save("clouds.mp4")?;
-```
-
-Requires `GOOGLE_API_KEY` env var with billing enabled.
-
-## CLI Usage
-
-```bash
-# Install
-cargo install genviz --features cli
-
-# Generate images
-genviz image "A cat wearing sunglasses" -o cat.png
-genviz image "A sunset" -o sunset.png -p flux --model flux-2-max
-genviz image "A portrait" -o portrait.png -p openai --model dall-e-3
-genviz image "A city" -o city.png -p grok --aspect-ratio 16:9
-
-# Image editing (all providers support --input)
-genviz image "Change the sofa to leather" -o edited.png -p gemini --input living_room.png
-genviz image "Add a hat" -o with_hat.png -p flux --model flux-kontext-pro --input portrait.jpg
-
-# Generate videos
-genviz video "Ocean waves" -o waves.mp4 -p grok
-genviz video "A cat jumping" -o cat.mp4 -p openai --duration 8
-genviz video "A timelapse of clouds" -o clouds.mp4 -p veo
-
-# List providers
-genviz providers
-
-# JSON output
-genviz image "A dog" -o dog.png --json
-```
-
-**Provider capabilities:**
-
-| Provider | `--aspect-ratio` | `--width`/`--height` | `--seed` | `--input` (editing) |
-|----------|------------------|----------------------|----------|---------------------|
-| Gemini   | -                | -                    | yes      | yes                 |
-| Flux     | yes              | yes                  | yes      | yes                 |
-| Grok     | yes              | -                    | -        | yes                 |
-| OpenAI   | yes              | yes                  | -        | yes                 |
-
-## MCP Server (AI Agent Integration)
-
-Run as an MCP server for integration with Claude Code and other AI agents:
-
-```bash
-genviz mcp
-```
-
-### Claude Code Configuration
-
-Add to `~/.claude/claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "genviz": {
-      "command": "genviz",
-      "args": ["mcp"],
-      "env": {
-        "GOOGLE_API_KEY": "your-google-api-key",
-        "BFL_API_KEY": "your-bfl-api-key",
-        "XAI_API_KEY": "your-xai-api-key",
-        "OPENAI_API_KEY": "your-openai-api-key"
-      }
-    }
-  }
-}
-```
-
-### Available Tools
-
-#### `generate_image`
-
-```json
-{
-  "name": "generate_image",
-  "parameters": {
-    "prompt": "A sunset over mountains",
-    "provider": "flux",
-    "output_path": "/tmp/sunset.png",
-    "aspect_ratio": "16:9"
-  }
-}
-```
-
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `prompt` | Yes | Text description of the image |
-| `provider` | No | `gemini` (default), `flux`, `grok`, or `openai` |
-| `output_path` | No | Save path (returns base64 if omitted). Use `{n}` placeholder for batch. |
-| `model` | No | Model variant |
-| `width`/`height` | No | Dimensions in pixels (Flux/OpenAI) |
-| `aspect_ratio` | No | `1:1`, `16:9`, `9:16`, `4:3`, `3:4`, `21:9` |
-| `seed` | No | For deterministic generation (Gemini/Flux) |
-| `count` | No | Number of images (1-10, default 1) |
-| `concurrency` | No | Max parallel requests (1-5, default 3) |
-| `input_image` | No | Base64-encoded image for editing (all providers) |
-
-#### `generate_video`
-
-```json
-{
-  "name": "generate_video",
-  "parameters": {
-    "prompt": "Ocean waves at sunset",
-    "provider": "grok",
-    "output_path": "/tmp/waves.mp4",
-    "duration": 5
-  }
-}
-```
-
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `prompt` | Yes | Text description of the video |
-| `provider` | No | `grok` (default), `openai`, or `veo` |
-| `output_path` | No | Save path |
-| `duration` | No | Video duration in seconds |
-| `aspect_ratio` | No | e.g., `16:9`, `9:16` |
-
-## Request Options
-
-```rust
-let request = GenerationRequest::new("A serene lake")
-    .with_aspect_ratio(AspectRatio::Landscape)  // 16:9
-    .with_seed(42)                               // Deterministic
-    .with_format(ImageFormat::Png);              // Output format
-```
-
 ## Error Handling
+
+Errors are typed and actionable — you can match on specific failure modes and decide whether to retry:
 
 ```rust
 use genviz::GenVizError;
 
 match provider.generate(&request).await {
     Ok(image) => image.save("out.png")?,
-    Err(GenVizError::RateLimited { retry_after }) => {
-        println!("Rate limited, retry after {:?}", retry_after);
-    }
-    Err(GenVizError::ContentBlocked(reason)) => {
-        println!("Content blocked: {}", reason);
-    }
-    Err(GenVizError::Billing(msg)) => {
-        println!("Billing issue: {}", msg);
-    }
-    Err(e) if e.is_retryable() => {
-        println!("Transient error, retrying: {}", e);
-    }
+    Err(GenVizError::RateLimited { retry_after }) => { /* back off */ }
+    Err(GenVizError::ContentBlocked(reason)) => { /* prompt was rejected */ }
+    Err(GenVizError::Billing(msg)) => { /* account issue */ }
+    Err(e) if e.is_retryable() => { /* transient failure, safe to retry */ }
     Err(e) => return Err(e.into()),
 }
 ```
+
+## CLI
+
+```bash
+cargo install genviz --features cli
+```
+
+```bash
+# Generate
+genviz image "A cat wearing sunglasses" -o cat.png
+genviz image "A sunset" -o sunset.png -p flux --model flux-2-max
+genviz video "Ocean waves" -o waves.mp4 -p grok --duration 5
+
+# Edit
+genviz image "Change the sofa to leather" -o edited.png --input living_room.png
+
+# List available providers
+genviz providers
+```
+
+## MCP Server
+
+Expose image and video generation as tools for Claude Code and other AI agents:
+
+```bash
+genviz mcp
+```
+
+Add to your Claude Code config (`~/.claude/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "genviz": {
+      "command": "genviz",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+This gives AI agents access to `generate_image` and `generate_video` tools. See [docs.rs](https://docs.rs/genviz) for full tool schemas and parameters.
+
+## Documentation
+
+- **API Reference**: [docs.rs/genviz](https://docs.rs/genviz)
+- **Examples**: [`examples/`](examples/) directory
+- **Changelog**: [CHANGELOG.md](CHANGELOG.md)
+- **Contributing**: [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## License
 
