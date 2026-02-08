@@ -183,7 +183,7 @@ impl VeoProvider {
                             && gen_resp
                                 .generated_samples
                                 .as_ref()
-                                .map_or(true, |s| s.is_empty())
+                                .is_none_or(|s| s.is_empty())
                         {
                             return Err(GenVizError::ContentBlocked(
                                 "Video was filtered by Veo safety filters".into(),

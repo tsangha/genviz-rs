@@ -248,9 +248,18 @@ impl McpServer {
     fn handle_tools_list(&self, id: Value) -> JsonRpcResponse {
         let tools = vec![
             Tool {
+                name: "list_providers",
+                description: "List available image and video providers with their models, capabilities, and API key status",
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }),
+            },
+            Tool {
                 name: "generate_image",
                 description:
-                    "Generate an image from a text prompt using AI (Flux, Gemini, Grok, or OpenAI)",
+                    "Generate an image from a text prompt using AI (Flux, Gemini, Grok, or OpenAI). Call list_providers first to see available models and which API keys are configured.",
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -269,24 +278,34 @@ impl McpServer {
                         },
                         "width": {
                             "type": "integer",
-                            "description": "Image width in pixels"
+                            "description": "Image width in pixels (Flux and OpenAI only)"
                         },
                         "height": {
                             "type": "integer",
-                            "description": "Image height in pixels"
+                            "description": "Image height in pixels (Flux and OpenAI only)"
                         },
                         "seed": {
                             "type": "integer",
-                            "description": "Seed for deterministic generation"
+                            "description": "Seed for deterministic generation (Gemini and Flux only)"
                         },
                         "aspect_ratio": {
                             "type": "string",
                             "enum": ["1:1", "16:9", "9:16", "4:3", "3:4", "21:9"],
-                            "description": "Aspect ratio (alternative to width/height)"
+                            "description": "Aspect ratio (Flux, Grok, and OpenAI only)"
                         },
                         "model": {
                             "type": "string",
-                            "description": "Model variant (gemini: nano-banana, nano-banana-pro; flux: flux-pro-1.1, flux-pro-1.1-ultra, flux-pro, flux-dev, flux-2-max, flux-2-pro, flux-2-flex, flux-2-klein-4b, flux-2-klein-9b, flux-kontext-pro, flux-kontext-max, flux-fill-pro, flux-expand-pro; grok: grok-imagine; openai: gpt-image-1, dall-e-3)"
+                            "enum": [
+                                "nano-banana", "nano-banana-pro",
+                                "flux-pro-1.1", "flux-pro-1.1-ultra", "flux-pro", "flux-dev",
+                                "flux-2-max", "flux-2-pro", "flux-2-flex",
+                                "flux-2-klein-4b", "flux-2-klein-9b",
+                                "flux-kontext-pro", "flux-kontext-max",
+                                "flux-fill-pro", "flux-expand-pro",
+                                "grok-imagine",
+                                "gpt-image-1", "dall-e-3"
+                            ],
+                            "description": "Model variant. Must match the selected provider. Call list_providers to see which models belong to which provider."
                         },
                         "count": {
                             "type": "integer",
@@ -311,7 +330,7 @@ impl McpServer {
             Tool {
                 name: "generate_video",
                 description:
-                    "Generate a video from a text prompt using AI (Grok, OpenAI/Sora, or Veo)",
+                    "Generate a video from a text prompt using AI (Grok, OpenAI/Sora, or Veo). Call list_providers first to see available providers and which API keys are configured.",
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -326,21 +345,21 @@ impl McpServer {
                         },
                         "output_path": {
                             "type": "string",
-                            "description": "Path to save the generated video (required for video)"
+                            "description": "Path to save the generated video"
                         },
                         "duration": {
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 15,
-                            "description": "Video duration in seconds (1-15 for Grok)"
+                            "description": "Video duration in seconds (Grok: 1-15, Sora: varies)"
                         },
                         "aspect_ratio": {
                             "type": "string",
-                            "description": "Aspect ratio (e.g., 16:9)"
+                            "description": "Aspect ratio (e.g., 16:9). Supported by Grok and Sora."
                         },
                         "resolution": {
                             "type": "string",
-                            "description": "Video resolution (for Veo)"
+                            "description": "Video resolution (Veo only, e.g., 720p)"
                         },
                         "source_image_url": {
                             "type": "string",
@@ -360,10 +379,118 @@ impl McpServer {
         let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
 
         match tool_name {
+            "list_providers" => self.list_providers(id),
             "generate_image" => self.generate_image(id, arguments).await,
             "generate_video" => self.generate_video(id, arguments).await,
             _ => JsonRpcResponse::error(id, -32602, format!("Unknown tool: {}", tool_name)),
         }
+    }
+
+    fn list_providers(&self, id: Value) -> JsonRpcResponse {
+        let check_key = |var: &str| -> bool { std::env::var(var).is_ok() };
+
+        let providers = json!({
+            "image_providers": [
+                {
+                    "name": "gemini",
+                    "api_key_env": "GOOGLE_API_KEY",
+                    "api_key_set": check_key("GOOGLE_API_KEY"),
+                    "default_model": "nano-banana-pro",
+                    "models": ["nano-banana", "nano-banana-pro"],
+                    "capabilities": {
+                        "editing": true,
+                        "aspect_ratio": false,
+                        "width_height": false,
+                        "seed": true
+                    }
+                },
+                {
+                    "name": "flux",
+                    "api_key_env": "BFL_API_KEY",
+                    "api_key_set": check_key("BFL_API_KEY"),
+                    "default_model": "flux-pro-1.1",
+                    "models": [
+                        "flux-pro-1.1", "flux-pro-1.1-ultra", "flux-pro", "flux-dev",
+                        "flux-2-max", "flux-2-pro", "flux-2-flex",
+                        "flux-2-klein-4b", "flux-2-klein-9b",
+                        "flux-kontext-pro", "flux-kontext-max",
+                        "flux-fill-pro", "flux-expand-pro"
+                    ],
+                    "capabilities": {
+                        "editing": true,
+                        "aspect_ratio": true,
+                        "width_height": true,
+                        "seed": true
+                    }
+                },
+                {
+                    "name": "grok",
+                    "api_key_env": "XAI_API_KEY",
+                    "api_key_set": check_key("XAI_API_KEY"),
+                    "default_model": "grok-imagine",
+                    "models": ["grok-imagine"],
+                    "capabilities": {
+                        "editing": true,
+                        "aspect_ratio": true,
+                        "width_height": false,
+                        "seed": false
+                    }
+                },
+                {
+                    "name": "openai",
+                    "api_key_env": "OPENAI_API_KEY",
+                    "api_key_set": check_key("OPENAI_API_KEY"),
+                    "default_model": "gpt-image-1",
+                    "models": ["gpt-image-1", "dall-e-3"],
+                    "capabilities": {
+                        "editing": true,
+                        "aspect_ratio": true,
+                        "width_height": true,
+                        "seed": false
+                    }
+                }
+            ],
+            "video_providers": [
+                {
+                    "name": "grok",
+                    "api_key_env": "XAI_API_KEY",
+                    "api_key_set": check_key("XAI_API_KEY"),
+                    "capabilities": {
+                        "duration": "1-15s",
+                        "aspect_ratio": true,
+                        "image_to_video": true
+                    }
+                },
+                {
+                    "name": "openai",
+                    "api_key_env": "OPENAI_API_KEY",
+                    "api_key_set": check_key("OPENAI_API_KEY"),
+                    "capabilities": {
+                        "duration": true,
+                        "aspect_ratio": true,
+                        "image_to_video": false
+                    }
+                },
+                {
+                    "name": "veo",
+                    "api_key_env": "GOOGLE_API_KEY",
+                    "api_key_set": check_key("GOOGLE_API_KEY"),
+                    "capabilities": {
+                        "duration": false,
+                        "aspect_ratio": false,
+                        "resolution": true,
+                        "image_to_video": false
+                    }
+                }
+            ]
+        });
+
+        let content = json!([{
+            "type": "text",
+            "text": serde_json::to_string_pretty(&providers).unwrap_or_default()
+        }]);
+
+        JsonRpcResponse::success(id, json!({ "content": content }))
     }
 
     async fn generate_image(&self, id: Value, arguments: Value) -> JsonRpcResponse {
@@ -978,11 +1105,69 @@ mod tests {
 
         let result = resp.result.unwrap();
         let tools = result["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 2);
+        assert_eq!(tools.len(), 3);
 
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert!(names.contains(&"list_providers"));
         assert!(names.contains(&"generate_image"));
         assert!(names.contains(&"generate_video"));
+    }
+
+    #[tokio::test]
+    async fn test_list_providers() {
+        let server = make_server();
+        let resp = server.list_providers(json!(1));
+
+        assert!(resp.error.is_none());
+        let result = resp.result.unwrap();
+        let content = result["content"].as_array().unwrap();
+        let text = content[0]["text"].as_str().unwrap();
+        let providers: Value = serde_json::from_str(text).unwrap();
+
+        // Verify structure
+        let image_providers = providers["image_providers"].as_array().unwrap();
+        let video_providers = providers["video_providers"].as_array().unwrap();
+        assert_eq!(image_providers.len(), 4);
+        assert_eq!(video_providers.len(), 3);
+
+        // Verify each image provider has required fields
+        for p in image_providers {
+            assert!(p["name"].is_string());
+            assert!(p["api_key_env"].is_string());
+            assert!(p["api_key_set"].is_boolean());
+            assert!(p["models"].is_array());
+            assert!(p["capabilities"].is_object());
+        }
+
+        // Verify provider names
+        let names: Vec<&str> = image_providers
+            .iter()
+            .map(|p| p["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["gemini", "flux", "grok", "openai"]);
+    }
+
+    #[tokio::test]
+    async fn test_generate_image_model_enum() {
+        // Verify model field has enum constraint in schema
+        let server = make_server();
+        let resp = server.handle_tools_list(json!(1));
+        let result = resp.result.unwrap();
+        let tools = result["tools"].as_array().unwrap();
+        let image_tool = tools
+            .iter()
+            .find(|t| t["name"] == "generate_image")
+            .unwrap();
+        let model_schema = &image_tool["inputSchema"]["properties"]["model"];
+        let model_enum = model_schema["enum"].as_array().unwrap();
+
+        // Should contain models from all providers
+        let models: Vec<&str> = model_enum.iter().map(|m| m.as_str().unwrap()).collect();
+        assert!(models.contains(&"nano-banana-pro")); // gemini
+        assert!(models.contains(&"flux-2-max")); // flux
+        assert!(models.contains(&"grok-imagine")); // grok
+        assert!(models.contains(&"gpt-image-1")); // openai
+        assert!(models.contains(&"dall-e-3")); // openai
     }
 
     #[tokio::test]
