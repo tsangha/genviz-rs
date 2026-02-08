@@ -7,10 +7,60 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Semaphore;
 
 /// Maximum images per request (hard limit).
 const MAX_COUNT: u32 = 10;
+
+/// Timeout for a single image generation (including provider polling).
+const IMAGE_GENERATION_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Timeout for video generation (including provider polling).
+const VIDEO_GENERATION_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// Decodes a base64 string that may be imperfectly formatted.
+///
+/// LLMs frequently send base64 with issues that strict decoders reject:
+/// - Data URI prefix (`data:image/png;base64,...`)
+/// - Missing padding (`=` characters)
+/// - Embedded whitespace or newlines
+///
+/// This function normalizes all of these before decoding.
+fn decode_base64_lenient(input: &str) -> Result<Vec<u8>, base64::DecodeError> {
+    use base64::Engine;
+
+    // Strip data URI prefix if present (e.g. "data:image/png;base64,")
+    let b64 = match input.find(";base64,") {
+        Some(pos) => &input[pos + 8..],
+        None => input,
+    };
+
+    // Strip whitespace (newlines, spaces, tabs)
+    let cleaned: String = b64.chars().filter(|c| !c.is_ascii_whitespace()).collect();
+
+    // Try standard decoding first (fast path)
+    if let Ok(data) = base64::engine::general_purpose::STANDARD.decode(&cleaned) {
+        return Ok(data);
+    }
+
+    // Fall back to no-pad decoding (handles missing `=`)
+    base64::engine::general_purpose::STANDARD_NO_PAD.decode(&cleaned)
+}
+/// Returns the environment variable name for a provider's API key.
+///
+/// Used for pre-flight checks before spawning generation tasks,
+/// so missing keys fail fast with a clear error.
+fn api_key_env_var(provider: &str) -> Option<&'static str> {
+    match provider {
+        "gemini" | "veo" => Some("GOOGLE_API_KEY"),
+        "flux" => Some("BFL_API_KEY"),
+        "grok" => Some("XAI_API_KEY"),
+        "openai" => Some("OPENAI_API_KEY"),
+        _ => None,
+    }
+}
+
 /// Maximum concurrent generations (hard limit).
 const MAX_CONCURRENCY: u32 = 5;
 /// Default concurrent generations.
@@ -321,7 +371,7 @@ impl McpServer {
                         },
                         "input_image": {
                             "type": "string",
-                            "description": "Base64-encoded input image for editing. All providers support this."
+                            "description": "Base64-encoded input image for editing. Accepts raw base64 or data URIs (e.g. data:image/png;base64,...). All providers support this."
                         }
                     },
                     "required": ["prompt"]
@@ -514,6 +564,20 @@ impl McpServer {
             return JsonRpcResponse::error(id, -32602, e);
         }
 
+        // Pre-flight API key check (fail fast before spawning tasks)
+        if let Some(env_var) = api_key_env_var(provider_name) {
+            if std::env::var(env_var).is_err() {
+                return JsonRpcResponse::error(
+                    id,
+                    -32602,
+                    format!(
+                        "{} requires {} environment variable to be set",
+                        provider_name, env_var
+                    ),
+                );
+            }
+        }
+
         // Validate and clamp count/concurrency
         let count = params.count.unwrap_or(1).clamp(1, MAX_COUNT);
         let concurrency = params
@@ -542,15 +606,24 @@ impl McpServer {
         }
 
         if let Some(ar) = &params.aspect_ratio {
-            if let Some(ratio) = parse_aspect_ratio(ar) {
-                request = request.with_aspect_ratio(ratio);
+            match parse_aspect_ratio(ar) {
+                Some(ratio) => request = request.with_aspect_ratio(ratio),
+                None => {
+                    return JsonRpcResponse::error(
+                        id,
+                        -32602,
+                        format!(
+                            "Invalid aspect_ratio '{}'. Valid values: 1:1, 16:9, 9:16, 4:3, 3:4, 21:9",
+                            ar
+                        ),
+                    );
+                }
             }
         }
 
         // Decode and add input image for editing
         if let Some(ref b64_image) = params.input_image {
-            use base64::Engine;
-            match base64::engine::general_purpose::STANDARD.decode(b64_image) {
+            match decode_base64_lenient(b64_image) {
                 Ok(data) => request = request.with_input_image(data),
                 Err(e) => {
                     return JsonRpcResponse::error(
@@ -589,8 +662,22 @@ impl McpServer {
             });
 
             let handle = tokio::spawn(async move {
-                let _permit = sem.acquire().await.expect("semaphore closed");
-                generate_single(&req, &provider, model.as_deref(), output_path, i).await
+                let _permit = sem
+                    .acquire()
+                    .await
+                    .map_err(|_| "semaphore closed".to_string())?;
+                match tokio::time::timeout(
+                    IMAGE_GENERATION_TIMEOUT,
+                    generate_single(&req, &provider, model.as_deref(), output_path, i),
+                )
+                .await
+                {
+                    Ok(result) => result,
+                    Err(_) => Err(format!(
+                        "timed out after {}s",
+                        IMAGE_GENERATION_TIMEOUT.as_secs()
+                    )),
+                }
             });
 
             handles.push(handle);
@@ -610,11 +697,11 @@ impl McpServer {
 
         // Build response
         if results.is_empty() {
-            let content = json!([{
-                "type": "text",
-                "text": format!("All {} generations failed:\n{}", count, errors.join("\n"))
-            }]);
-            return JsonRpcResponse::success(id, json!({ "content": content, "isError": true }));
+            return JsonRpcResponse::error(
+                id,
+                -32603,
+                format!("All {} generations failed:\n{}", count, errors.join("\n")),
+            );
         }
 
         let response = json!({
@@ -649,11 +736,35 @@ impl McpServer {
 
         let provider_name = params.provider.as_deref().unwrap_or("grok");
 
-        let result = match provider_name {
-            "grok" => generate_video_with_grok(&params).await,
-            "openai" => generate_video_with_openai(&params).await,
-            "veo" => generate_video_with_veo(&params).await,
-            _ => Err(format!("Unknown video provider: {}", provider_name)),
+        // Pre-flight API key check
+        if let Some(env_var) = api_key_env_var(provider_name) {
+            if std::env::var(env_var).is_err() {
+                return JsonRpcResponse::error(
+                    id,
+                    -32602,
+                    format!(
+                        "{} requires {} environment variable to be set",
+                        provider_name, env_var
+                    ),
+                );
+            }
+        }
+
+        let result = match tokio::time::timeout(VIDEO_GENERATION_TIMEOUT, async {
+            match provider_name {
+                "grok" => generate_video_with_grok(&params).await,
+                "openai" => generate_video_with_openai(&params).await,
+                "veo" => generate_video_with_veo(&params).await,
+                _ => Err(format!("Unknown video provider: {}", provider_name)),
+            }
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(format!(
+                "timed out after {}s",
+                VIDEO_GENERATION_TIMEOUT.as_secs()
+            )),
         };
 
         match result {
@@ -664,13 +775,7 @@ impl McpServer {
                 }]);
                 JsonRpcResponse::success(id, json!({ "content": content }))
             }
-            Err(e) => {
-                let content = json!([{
-                    "type": "text",
-                    "text": format!("Video generation failed: {}", e)
-                }]);
-                JsonRpcResponse::success(id, json!({ "content": content, "isError": true }))
-            }
+            Err(e) => JsonRpcResponse::error(id, -32603, format!("Video generation failed: {}", e)),
         }
     }
 }
@@ -1375,5 +1480,73 @@ mod tests {
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32602);
         assert!(err.message.contains(".."));
+    }
+
+    #[test]
+    fn test_decode_base64_lenient_standard() {
+        // Standard padded base64
+        let data = decode_base64_lenient("aGVsbG8=").unwrap();
+        assert_eq!(data, b"hello");
+    }
+
+    #[test]
+    fn test_decode_base64_lenient_no_padding() {
+        // Missing padding (the exact error Claude hits)
+        let data = decode_base64_lenient("aGVsbG8").unwrap();
+        assert_eq!(data, b"hello");
+    }
+
+    #[test]
+    fn test_decode_base64_lenient_data_uri() {
+        // Data URI prefix (common from browser/screenshot tools)
+        let data = decode_base64_lenient("data:image/png;base64,aGVsbG8=").unwrap();
+        assert_eq!(data, b"hello");
+    }
+
+    #[test]
+    fn test_decode_base64_lenient_data_uri_no_padding() {
+        // Data URI + missing padding (worst case combo)
+        let data = decode_base64_lenient("data:image/jpeg;base64,aGVsbG8").unwrap();
+        assert_eq!(data, b"hello");
+    }
+
+    #[test]
+    fn test_decode_base64_lenient_whitespace() {
+        // Embedded newlines/spaces
+        let data = decode_base64_lenient("aGVs\nbG8=").unwrap();
+        assert_eq!(data, b"hello");
+    }
+
+    #[test]
+    fn test_decode_base64_lenient_invalid() {
+        // Truly invalid base64 should still error
+        assert!(decode_base64_lenient("!!!not-base64!!!").is_err());
+    }
+
+    #[test]
+    fn test_api_key_env_var() {
+        assert_eq!(api_key_env_var("gemini"), Some("GOOGLE_API_KEY"));
+        assert_eq!(api_key_env_var("flux"), Some("BFL_API_KEY"));
+        assert_eq!(api_key_env_var("grok"), Some("XAI_API_KEY"));
+        assert_eq!(api_key_env_var("openai"), Some("OPENAI_API_KEY"));
+        assert_eq!(api_key_env_var("veo"), Some("GOOGLE_API_KEY"));
+        assert_eq!(api_key_env_var("unknown"), None);
+    }
+
+    #[tokio::test]
+    async fn test_generate_image_invalid_aspect_ratio() {
+        let server = make_server();
+        let resp = server
+            .generate_image(
+                json!(1),
+                json!({"prompt": "test", "provider": "flux", "aspect_ratio": "2:3"}),
+            )
+            .await;
+
+        assert!(resp.error.is_some());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32602);
+        assert!(err.message.contains("Invalid aspect_ratio"));
+        assert!(err.message.contains("2:3"));
     }
 }
