@@ -1032,4 +1032,30 @@ mod tests {
             "fal-ai/bytedance/seedance/v1.5/pro/image-to-video"
         );
     }
+
+    // -- health_check tests --
+
+    #[tokio::test]
+    async fn test_health_check_empty_key() {
+        let provider = FalVideoProvider {
+            client: reqwest::Client::new(),
+            api_key: String::new(),
+            model: FalVideoModel::default(),
+            poll_interval: Duration::from_secs(3),
+            timeout: Duration::from_secs(600),
+        };
+        let result = provider.health_check().await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("empty"));
+    }
+
+    #[tokio::test]
+    async fn test_health_check_with_key() {
+        let provider = FalVideoProviderBuilder::new()
+            .api_key("fal-test-key")
+            .build()
+            .unwrap();
+        let result = provider.health_check().await;
+        assert!(result.is_ok());
+    }
 }

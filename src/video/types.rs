@@ -317,6 +317,10 @@ mod tests {
     fn test_video_provider_kind_display() {
         assert_eq!(VideoProviderKind::Grok.to_string(), "grok");
         assert_eq!(VideoProviderKind::Veo.to_string(), "veo");
+        assert_eq!(VideoProviderKind::OpenAI.to_string(), "openai");
+        assert_eq!(VideoProviderKind::Kling.to_string(), "kling");
+        assert_eq!(VideoProviderKind::Fal.to_string(), "fal");
+        assert_eq!(VideoProviderKind::MiniMax.to_string(), "minimax");
     }
 
     #[test]
@@ -381,5 +385,69 @@ mod tests {
             VideoMetadata::default(),
         );
         assert_eq!(video.to_data_url(), "data:video/mp4;base64,AQID");
+    }
+
+    #[test]
+    fn test_subject_reference_serde_rename() {
+        let sr = SubjectReference {
+            ref_type: "character".into(),
+            image: "https://example.com/face.jpg".into(),
+        };
+        let json = serde_json::to_value(&sr).unwrap();
+        // The field should serialize as "type", not "ref_type"
+        assert_eq!(json["type"], "character");
+        assert!(json.get("ref_type").is_none());
+        assert_eq!(json["image"], "https://example.com/face.jpg");
+
+        // Round-trip: deserialize back
+        let deserialized: SubjectReference = serde_json::from_value(json).unwrap();
+        assert_eq!(deserialized.ref_type, "character");
+        assert_eq!(deserialized.image, "https://example.com/face.jpg");
+    }
+
+    #[test]
+    fn test_builder_with_seed() {
+        let req = VideoGenerationRequest::new("Test").with_seed(42);
+        assert_eq!(req.seed, Some(42));
+    }
+
+    #[test]
+    fn test_builder_with_camera_fixed() {
+        let req = VideoGenerationRequest::new("Test").with_camera_fixed(true);
+        assert_eq!(req.camera_fixed, Some(true));
+    }
+
+    #[test]
+    fn test_builder_with_prompt_optimizer() {
+        let req = VideoGenerationRequest::new("Test").with_prompt_optimizer(true);
+        assert_eq!(req.prompt_optimizer, Some(true));
+    }
+
+    #[test]
+    fn test_builder_with_subject_reference() {
+        let req = VideoGenerationRequest::new("Test")
+            .with_subject_reference("character", "https://example.com/face.jpg");
+        let refs = req.subject_reference.as_ref().unwrap();
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].ref_type, "character");
+        assert_eq!(refs[0].image, "https://example.com/face.jpg");
+    }
+
+    #[test]
+    fn test_video_provider_kind_serde_roundtrip() {
+        let variants = [
+            (VideoProviderKind::Grok, "grok"),
+            (VideoProviderKind::Veo, "veo"),
+            (VideoProviderKind::OpenAI, "openai"),
+            (VideoProviderKind::Kling, "kling"),
+            (VideoProviderKind::Fal, "fal"),
+            (VideoProviderKind::MiniMax, "minimax"),
+        ];
+        for (variant, expected_str) in &variants {
+            let json = serde_json::to_value(variant).unwrap();
+            assert_eq!(json.as_str().unwrap(), *expected_str);
+            let deserialized: VideoProviderKind = serde_json::from_value(json).unwrap();
+            assert_eq!(&deserialized, variant);
+        }
     }
 }

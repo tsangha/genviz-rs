@@ -59,10 +59,26 @@
 
 mod error;
 
-#[cfg(feature = "image")]
+#[cfg(any(
+    feature = "image",
+    feature = "flux-image",
+    feature = "gemini-image",
+    feature = "grok-image",
+    feature = "openai-image",
+    feature = "kling-image",
+    feature = "fal-image"
+))]
 pub mod image;
 
-#[cfg(feature = "video")]
+#[cfg(any(
+    feature = "video",
+    feature = "grok-video",
+    feature = "veo",
+    feature = "openai-video",
+    feature = "kling-video",
+    feature = "fal-video",
+    feature = "minimax-video"
+))]
 pub mod video;
 
 #[cfg(feature = "cli")]
@@ -73,7 +89,15 @@ pub mod mcp;
 pub use error::{GenVizError, Result};
 
 // Re-export commonly used image types
-#[cfg(feature = "image")]
+#[cfg(any(
+    feature = "image",
+    feature = "flux-image",
+    feature = "gemini-image",
+    feature = "grok-image",
+    feature = "openai-image",
+    feature = "kling-image",
+    feature = "fal-image"
+))]
 pub use image::{
     AspectRatio, GeneratedImage, GenerationMetadata, GenerationRequest, ImageFormat, ImageProvider,
     ImageProviderExt, ImageProviderKind,
@@ -98,7 +122,15 @@ pub use image::providers::{KlingImageModel, KlingImageProvider, KlingImageProvid
 pub use image::providers::{FalImageModel, FalImageProvider, FalImageProviderBuilder};
 
 // Re-export commonly used video types
-#[cfg(feature = "video")]
+#[cfg(any(
+    feature = "video",
+    feature = "grok-video",
+    feature = "veo",
+    feature = "openai-video",
+    feature = "kling-video",
+    feature = "fal-video",
+    feature = "minimax-video"
+))]
 pub use video::{
     GeneratedVideo, SubjectReference, VideoGenerationRequest, VideoMetadata, VideoProvider,
     VideoProviderExt, VideoProviderKind,
@@ -126,10 +158,26 @@ pub use video::providers::{MiniMaxVideoModel, MiniMaxVideoProvider, MiniMaxVideo
 pub mod prelude {
     pub use crate::error::{GenVizError, Result};
 
-    #[cfg(feature = "image")]
+    #[cfg(any(
+        feature = "image",
+        feature = "flux-image",
+        feature = "gemini-image",
+        feature = "grok-image",
+        feature = "openai-image",
+        feature = "kling-image",
+        feature = "fal-image"
+    ))]
     pub use crate::image::{GeneratedImage, GenerationRequest, ImageProvider, ImageProviderExt};
 
-    #[cfg(feature = "video")]
+    #[cfg(any(
+        feature = "video",
+        feature = "grok-video",
+        feature = "veo",
+        feature = "openai-video",
+        feature = "kling-video",
+        feature = "fal-video",
+        feature = "minimax-video"
+    ))]
     pub use crate::video::{
         GeneratedVideo, VideoGenerationRequest, VideoProvider, VideoProviderExt,
     };

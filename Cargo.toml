@@ -2,7 +2,7 @@
 name = "genviz"
 version = "0.2.1"
 edition = "2021"
-description = "Unified AI media generation (image + video) via Flux, Gemini, Grok, OpenAI, and Sora APIs"
+description = "Unified AI media generation (image + video) via Flux, Gemini, Grok, OpenAI, Kling, fal.ai, MiniMax, and Veo APIs"
 license = "MIT"
 authors = ["Taj Sangha"]
 repository = "https://github.com/tsangha/genviz-rs"

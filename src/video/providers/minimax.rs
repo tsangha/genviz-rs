@@ -728,4 +728,124 @@ mod tests {
         assert_eq!(refs[0]["type"], "character");
         assert_eq!(refs[0]["image"], "https://example.com/face.jpg");
     }
+
+    // -- parse_error tests --
+
+    #[test]
+    fn test_parse_error_auth_401() {
+        let provider = MiniMaxVideoProviderBuilder::new()
+            .api_key("test-key")
+            .build()
+            .unwrap();
+        let headers = reqwest::header::HeaderMap::new();
+        let err = provider.parse_error(401, "Unauthorized", &headers);
+        assert!(matches!(err, GenVizError::Auth(_)));
+    }
+
+    #[test]
+    fn test_parse_error_auth_403() {
+        let provider = MiniMaxVideoProviderBuilder::new()
+            .api_key("test-key")
+            .build()
+            .unwrap();
+        let headers = reqwest::header::HeaderMap::new();
+        let err = provider.parse_error(403, "Forbidden", &headers);
+        assert!(matches!(err, GenVizError::Auth(_)));
+    }
+
+    #[test]
+    fn test_parse_error_invalid_request_422() {
+        let provider = MiniMaxVideoProviderBuilder::new()
+            .api_key("test-key")
+            .build()
+            .unwrap();
+        let headers = reqwest::header::HeaderMap::new();
+        let err = provider.parse_error(422, "Unprocessable Entity", &headers);
+        assert!(matches!(err, GenVizError::InvalidRequest(_)));
+    }
+
+    #[test]
+    fn test_parse_error_rate_limited_429() {
+        let provider = MiniMaxVideoProviderBuilder::new()
+            .api_key("test-key")
+            .build()
+            .unwrap();
+        let headers = reqwest::header::HeaderMap::new();
+        let err = provider.parse_error(429, "Too Many Requests", &headers);
+        assert!(matches!(err, GenVizError::RateLimited { .. }));
+    }
+
+    #[test]
+    fn test_parse_error_content_blocked() {
+        let provider = MiniMaxVideoProviderBuilder::new()
+            .api_key("test-key")
+            .build()
+            .unwrap();
+        let headers = reqwest::header::HeaderMap::new();
+        let err = provider.parse_error(500, "content_blocked by safety filter", &headers);
+        assert!(matches!(err, GenVizError::ContentBlocked(_)));
+    }
+
+    #[test]
+    fn test_parse_error_generic_api_error() {
+        let provider = MiniMaxVideoProviderBuilder::new()
+            .api_key("test-key")
+            .build()
+            .unwrap();
+        let headers = reqwest::header::HeaderMap::new();
+        let err = provider.parse_error(500, "Internal Server Error", &headers);
+        assert!(matches!(err, GenVizError::Api { status: 500, .. }));
+    }
+
+    // -- Empty subject_reference vec treated as None --
+
+    #[test]
+    fn test_empty_subject_reference_vec_treated_as_none() {
+        let mut req = VideoGenerationRequest::new("A scene");
+        req.subject_reference = Some(vec![]);
+        let mm_req = MiniMaxVideoRequest::from_request(&req, &MiniMaxVideoModel::Hailuo23);
+        assert!(
+            mm_req.subject_reference.is_none(),
+            "empty subject_reference vec should be filtered to None"
+        );
+    }
+
+    // -- Multiple subject references --
+
+    #[test]
+    fn test_multiple_subject_references() {
+        let req = VideoGenerationRequest::new("Two characters")
+            .with_subject_reference("character", "https://example.com/face1.jpg")
+            .with_subject_reference("character", "https://example.com/face2.jpg");
+        let refs = req.subject_reference.as_ref().unwrap();
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0].image, "https://example.com/face1.jpg");
+        assert_eq!(refs[1].image, "https://example.com/face2.jpg");
+    }
+
+    // -- health_check tests --
+
+    #[tokio::test]
+    async fn test_health_check_empty_key() {
+        let provider = MiniMaxVideoProvider {
+            client: reqwest::Client::new(),
+            api_key: String::new(),
+            model: MiniMaxVideoModel::default(),
+            poll_interval: Duration::from_secs(3),
+            timeout: Duration::from_secs(600),
+        };
+        let result = provider.health_check().await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("empty"));
+    }
+
+    #[tokio::test]
+    async fn test_health_check_with_key() {
+        let provider = MiniMaxVideoProviderBuilder::new()
+            .api_key("mm-test-key")
+            .build()
+            .unwrap();
+        let result = provider.health_check().await;
+        assert!(result.is_ok());
+    }
 }

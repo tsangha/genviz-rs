@@ -858,8 +858,11 @@ struct VeoParameters {
 
 /// Detect MIME type from base64-encoded data using magic byte detection.
 /// Falls back to the provided default if detection fails.
+///
+/// This inlines the magic byte checks to avoid a cross-module dependency on
+/// `crate::image::ImageFormat`, which may not be compiled when only video
+/// features are enabled.
 fn detect_mime_from_base64(base64_data: &str, fallback: &str) -> String {
-    use crate::image::ImageFormat;
     use base64::Engine;
 
     let bytes = base64::engine::general_purpose::STANDARD
@@ -867,9 +870,28 @@ fn detect_mime_from_base64(base64_data: &str, fallback: &str) -> String {
         .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(base64_data))
         .unwrap_or_default();
 
-    ImageFormat::from_magic_bytes(&bytes)
-        .map(|f| f.mime_type().to_string())
-        .unwrap_or_else(|| fallback.to_string())
+    if bytes.len() < 4 {
+        return fallback.to_string();
+    }
+
+    // PNG: starts with 0x89 'P' 'N' 'G'
+    if bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47 {
+        return "image/png".to_string();
+    }
+    // JPEG: starts with 0xFF 0xD8 0xFF
+    if bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF {
+        return "image/jpeg".to_string();
+    }
+    // GIF: starts with "GIF8"
+    if bytes[0] == b'G' && bytes[1] == b'I' && bytes[2] == b'F' && bytes[3] == b'8' {
+        return "image/gif".to_string();
+    }
+    // WebP: starts with "RIFF" at offset 0 and "WEBP" at offset 8
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return "image/webp".to_string();
+    }
+
+    fallback.to_string()
 }
 
 impl VeoRequest {
