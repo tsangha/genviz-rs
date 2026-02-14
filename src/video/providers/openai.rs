@@ -113,17 +113,67 @@ impl SoraProvider {
     }
 
     /// Submit a video generation request. Returns the video generation ID.
+    ///
+    /// Uses JSON for text-only requests, multipart form-data when a source image
+    /// is provided (Sora requires file upload for `input_reference`).
     async fn submit(&self, request: &VideoGenerationRequest) -> Result<String> {
-        let body = SoraRequest::from_request(request, &self.model);
+        let response = if let Some(ref image_url) = request.source_image_url {
+            // Download the image from the URL first
+            let image_resp = self.client.get(image_url).send().await?;
+            if !image_resp.status().is_success() {
+                return Err(GenVizError::Api {
+                    status: image_resp.status().as_u16(),
+                    message: format!("Failed to download source image from {}", image_url),
+                });
+            }
+            let image_bytes = image_resp.bytes().await?;
 
-        let response = self
-            .client
-            .post(BASE_URL)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await?;
+            // Determine MIME type from URL extension or default to png
+            let mime = if image_url.contains(".jpg") || image_url.contains(".jpeg") {
+                "image/jpeg"
+            } else if image_url.contains(".webp") {
+                "image/webp"
+            } else {
+                "image/png"
+            };
+
+            let sora_req = SoraRequest::from_request(request, &self.model);
+            let file_part = reqwest::multipart::Part::bytes(image_bytes.to_vec())
+                .file_name("input.png")
+                .mime_str(mime)
+                .map_err(|e| GenVizError::Api {
+                    status: 0,
+                    message: format!("Failed to create multipart part: {}", e),
+                })?;
+
+            let mut form = reqwest::multipart::Form::new()
+                .text("model", sora_req.model)
+                .text("prompt", sora_req.prompt)
+                .part("input_reference", file_part);
+
+            if let Some(size) = sora_req.size {
+                form = form.text("size", size);
+            }
+            if let Some(seconds) = sora_req.seconds {
+                form = form.text("seconds", seconds);
+            }
+
+            self.client
+                .post(BASE_URL)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .multipart(form)
+                .send()
+                .await?
+        } else {
+            let body = SoraRequest::from_request(request, &self.model);
+            self.client
+                .post(BASE_URL)
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("Content-Type", "application/json")
+                .json(&body)
+                .send()
+                .await?
+        };
 
         let status = response.status();
         if !status.is_success() {
@@ -315,6 +365,17 @@ struct SoraRequest {
     /// Video duration: "4", "8", or "12" seconds.
     #[serde(skip_serializing_if = "Option::is_none")]
     seconds: Option<String>,
+    /// Input reference image for image-to-video generation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    input_reference: Option<SoraInputReference>,
+}
+
+/// Reference image for Sora image-to-video.
+#[derive(Debug, Serialize)]
+struct SoraInputReference {
+    #[serde(rename = "type")]
+    ref_type: String,
+    url: String,
 }
 
 impl SoraRequest {
@@ -323,9 +384,9 @@ impl SoraRequest {
 
     fn from_request(req: &VideoGenerationRequest, model: &SoraModel) -> Self {
         let size = req.aspect_ratio.as_ref().map(|ar| match ar.as_str() {
-            "16:9" => "1920x1080".to_string(),
-            "9:16" => "1080x1920".to_string(),
-            "1:1" => "1080x1080".to_string(),
+            "16:9" => "1280x720".to_string(),
+            "9:16" => "720x1280".to_string(),
+            "1:1" => "1024x1024".to_string(),
             other => other.to_string(),
         });
 
@@ -339,11 +400,17 @@ impl SoraRequest {
             nearest.to_string()
         });
 
+        let input_reference = req.source_image_url.as_ref().map(|url| SoraInputReference {
+            ref_type: "image".to_string(),
+            url: url.clone(),
+        });
+
         Self {
             model: model.as_str().to_string(),
             prompt: req.prompt.clone(),
             size,
             seconds,
+            input_reference,
         }
     }
 }
@@ -452,7 +519,7 @@ mod tests {
         let req = VideoGenerationRequest::new("A flying bird").with_aspect_ratio("16:9");
         let sora_req = SoraRequest::from_request(&req, &SoraModel::Sora2);
 
-        assert_eq!(sora_req.size.as_deref(), Some("1920x1080"));
+        assert_eq!(sora_req.size.as_deref(), Some("1280x720"));
     }
 
     #[test]
@@ -460,7 +527,7 @@ mod tests {
         let req = VideoGenerationRequest::new("test").with_aspect_ratio("9:16");
         let sora_req = SoraRequest::from_request(&req, &SoraModel::Sora2);
 
-        assert_eq!(sora_req.size.as_deref(), Some("1080x1920"));
+        assert_eq!(sora_req.size.as_deref(), Some("720x1280"));
     }
 
     #[test]
@@ -468,7 +535,7 @@ mod tests {
         let req = VideoGenerationRequest::new("test").with_aspect_ratio("1:1");
         let sora_req = SoraRequest::from_request(&req, &SoraModel::Sora2);
 
-        assert_eq!(sora_req.size.as_deref(), Some("1080x1080"));
+        assert_eq!(sora_req.size.as_deref(), Some("1024x1024"));
     }
 
     #[test]
@@ -516,6 +583,43 @@ mod tests {
         assert!(json.get("seconds").is_none());
         assert!(json.get("prompt").is_some());
         assert!(json.get("model").is_some());
+    }
+
+    #[test]
+    fn test_request_construction_with_source_image() {
+        let req = VideoGenerationRequest::new("Animate this photo")
+            .with_source_image("https://example.com/photo.jpg");
+        let sora_req = SoraRequest::from_request(&req, &SoraModel::Sora2);
+
+        assert!(sora_req.input_reference.is_some());
+        let input_ref = sora_req.input_reference.as_ref().unwrap();
+        assert_eq!(input_ref.ref_type, "image");
+        assert_eq!(input_ref.url, "https://example.com/photo.jpg");
+    }
+
+    #[test]
+    fn test_request_serialization_with_input_reference() {
+        let req = VideoGenerationRequest::new("Animate this")
+            .with_source_image("https://example.com/img.jpg");
+        let sora_req = SoraRequest::from_request(&req, &SoraModel::Sora2);
+        let json = serde_json::to_value(&sora_req).unwrap();
+
+        let input_ref = json.get("input_reference").unwrap();
+        assert_eq!(input_ref["type"], "image");
+        assert_eq!(input_ref["url"], "https://example.com/img.jpg");
+        // Old "input" field should not exist
+        assert!(json.get("input").is_none());
+    }
+
+    #[test]
+    fn test_request_construction_without_source_image_has_no_input_reference() {
+        let req = VideoGenerationRequest::new("A flying bird");
+        let sora_req = SoraRequest::from_request(&req, &SoraModel::Sora2);
+
+        assert!(sora_req.input_reference.is_none());
+
+        let json = serde_json::to_value(&sora_req).unwrap();
+        assert!(json.get("input_reference").is_none());
     }
 
     #[test]

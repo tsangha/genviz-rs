@@ -18,6 +18,8 @@ pub enum VideoProviderKind {
     Kling,
     /// fal.ai video models.
     Fal,
+    /// MiniMax Hailuo video generation (direct API).
+    MiniMax,
 }
 
 impl std::fmt::Display for VideoProviderKind {
@@ -28,8 +30,19 @@ impl std::fmt::Display for VideoProviderKind {
             Self::OpenAI => write!(f, "openai"),
             Self::Kling => write!(f, "kling"),
             Self::Fal => write!(f, "fal"),
+            Self::MiniMax => write!(f, "minimax"),
         }
     }
+}
+
+/// A subject reference for character consistency (MiniMax direct API).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubjectReference {
+    /// Reference type (e.g., "character").
+    #[serde(rename = "type")]
+    pub ref_type: String,
+    /// Image URL or base64 data.
+    pub image: String,
 }
 
 /// Metadata about the video generation process.
@@ -56,8 +69,38 @@ pub struct VideoGenerationRequest {
     pub aspect_ratio: Option<String>,
     /// Resolution (e.g., "720p").
     pub resolution: Option<String>,
-    /// Source image URL (for image-to-video).
+    /// Source image URL for image-to-video (Grok, Kling, fal.ai, Sora).
     pub source_image_url: Option<String>,
+    /// URL to last frame image for video interpolation (fal.ai Wan FLF2V, Kling-via-fal).
+    pub last_frame_url: Option<String>,
+    /// Base64-encoded first frame image (Veo only).
+    pub image: Option<String>,
+    /// Base64-encoded last frame image (Veo only).
+    pub last_frame: Option<String>,
+    /// Base64-encoded video for extension/continuation (Veo only).
+    pub video: Option<String>,
+    /// Base64-encoded reference images for style/asset guidance (Veo only, max 3).
+    pub reference_images: Option<Vec<String>>,
+    /// Negative prompt — describes what to avoid (Veo, fal.ai).
+    pub negative_prompt: Option<String>,
+    /// Person generation policy: "allow_all" or "allow_adult" (Veo only).
+    pub person_generation: Option<String>,
+    /// Number of videos to generate (Veo only).
+    pub number_of_videos: Option<u32>,
+    /// GCS bucket URI for video output (Vertex AI only).
+    pub storage_uri: Option<String>,
+    /// Enable prompt enhancement (Vertex AI only).
+    pub enhance_prompt: Option<bool>,
+    /// Enable audio generation (Vertex AI only).
+    pub generate_audio: Option<bool>,
+    /// Seed for deterministic generation (Seedance).
+    pub seed: Option<i64>,
+    /// Lock camera position (Seedance).
+    pub camera_fixed: Option<bool>,
+    /// Enable MiniMax prompt enhancement.
+    pub prompt_optimizer: Option<bool>,
+    /// Subject references for character consistency (MiniMax direct API).
+    pub subject_reference: Option<Vec<SubjectReference>>,
 }
 
 impl VideoGenerationRequest {
@@ -69,6 +112,21 @@ impl VideoGenerationRequest {
             aspect_ratio: None,
             resolution: None,
             source_image_url: None,
+            last_frame_url: None,
+            image: None,
+            last_frame: None,
+            video: None,
+            reference_images: None,
+            negative_prompt: None,
+            person_generation: None,
+            number_of_videos: None,
+            storage_uri: None,
+            enhance_prompt: None,
+            generate_audio: None,
+            seed: None,
+            camera_fixed: None,
+            prompt_optimizer: None,
+            subject_reference: None,
         }
     }
 
@@ -93,6 +151,107 @@ impl VideoGenerationRequest {
     /// Sets a source image for image-to-video generation.
     pub fn with_source_image(mut self, url: impl Into<String>) -> Self {
         self.source_image_url = Some(url.into());
+        self
+    }
+
+    /// Sets a last frame URL for video interpolation (fal.ai Wan FLF2V).
+    pub fn with_last_frame_url(mut self, url: impl Into<String>) -> Self {
+        self.last_frame_url = Some(url.into());
+        self
+    }
+
+    /// Sets a base64-encoded first frame image (Veo only).
+    pub fn with_image(mut self, base64: impl Into<String>) -> Self {
+        self.image = Some(base64.into());
+        self
+    }
+
+    /// Sets a base64-encoded last frame image (Veo only).
+    pub fn with_last_frame(mut self, base64: impl Into<String>) -> Self {
+        self.last_frame = Some(base64.into());
+        self
+    }
+
+    /// Sets a base64-encoded video for extension/continuation (Veo only).
+    pub fn with_video(mut self, base64: impl Into<String>) -> Self {
+        self.video = Some(base64.into());
+        self
+    }
+
+    /// Adds a base64-encoded reference image (Veo only, max 3).
+    pub fn with_reference_image(mut self, base64: impl Into<String>) -> Self {
+        self.reference_images
+            .get_or_insert_with(Vec::new)
+            .push(base64.into());
+        self
+    }
+
+    /// Sets the negative prompt (Veo, fal.ai).
+    pub fn with_negative_prompt(mut self, prompt: impl Into<String>) -> Self {
+        self.negative_prompt = Some(prompt.into());
+        self
+    }
+
+    /// Sets the person generation policy (Veo only).
+    pub fn with_person_generation(mut self, policy: impl Into<String>) -> Self {
+        self.person_generation = Some(policy.into());
+        self
+    }
+
+    /// Sets the number of videos to generate (Veo only).
+    pub fn with_number_of_videos(mut self, n: u32) -> Self {
+        self.number_of_videos = Some(n);
+        self
+    }
+
+    /// Sets the GCS bucket URI for video output (Vertex AI only).
+    pub fn with_storage_uri(mut self, uri: impl Into<String>) -> Self {
+        self.storage_uri = Some(uri.into());
+        self
+    }
+
+    /// Enables or disables prompt enhancement (Vertex AI only).
+    pub fn with_enhance_prompt(mut self, enhance: bool) -> Self {
+        self.enhance_prompt = Some(enhance);
+        self
+    }
+
+    /// Enables or disables audio generation (Vertex AI only).
+    pub fn with_generate_audio(mut self, audio: bool) -> Self {
+        self.generate_audio = Some(audio);
+        self
+    }
+
+    /// Sets the seed for deterministic generation (Seedance).
+    pub fn with_seed(mut self, seed: i64) -> Self {
+        self.seed = Some(seed);
+        self
+    }
+
+    /// Locks the camera position (Seedance).
+    pub fn with_camera_fixed(mut self, fixed: bool) -> Self {
+        self.camera_fixed = Some(fixed);
+        self
+    }
+
+    /// Enables or disables prompt optimization (MiniMax).
+    pub fn with_prompt_optimizer(mut self, optimize: bool) -> Self {
+        self.prompt_optimizer = Some(optimize);
+        self
+    }
+
+    /// Adds a subject reference for character consistency (MiniMax direct API).
+    pub fn with_subject_reference(
+        mut self,
+        ref_type: impl Into<String>,
+        image: impl Into<String>,
+    ) -> Self {
+        self.subject_reference
+            .get_or_insert_with(Vec::new)
+            .push(SubjectReference {
+                ref_type: ref_type.into(),
+                image: image.into(),
+            });
         self
     }
 }
@@ -176,6 +335,19 @@ mod tests {
             req.source_image_url.as_deref(),
             Some("https://example.com/photo.jpg")
         );
+        assert!(req.image.is_none());
+        assert!(req.last_frame.is_none());
+        assert!(req.last_frame_url.is_none());
+    }
+
+    #[test]
+    fn test_video_request_with_frame_images() {
+        let req = VideoGenerationRequest::new("Interpolate between frames")
+            .with_image("first_frame_b64")
+            .with_last_frame("last_frame_b64");
+
+        assert_eq!(req.image.as_deref(), Some("first_frame_b64"));
+        assert_eq!(req.last_frame.as_deref(), Some("last_frame_b64"));
     }
 
     #[test]

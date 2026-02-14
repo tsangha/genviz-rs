@@ -53,12 +53,20 @@ fn decode_base64_lenient(input: &str) -> Result<Vec<u8>, base64::DecodeError> {
 /// so missing keys fail fast with a clear error.
 fn api_key_env_var(provider: &str) -> Option<&'static str> {
     match provider {
-        "gemini" | "veo" => Some("GOOGLE_API_KEY"),
+        "gemini" => Some("GOOGLE_API_KEY"),
+        "veo" => {
+            if std::env::var("VERTEX_AI_PROJECT").is_ok() {
+                None // Vertex AI uses gcloud auth, no API key needed
+            } else {
+                Some("GOOGLE_API_KEY")
+            }
+        }
         "flux" => Some("BFL_API_KEY"),
         "grok" => Some("XAI_API_KEY"),
         "openai" => Some("OPENAI_API_KEY"),
         "kling" => Some("KLING_ACCESS_KEY"),
         "fal" => Some("FAL_KEY"),
+        "minimax" => Some("MINIMAX_API_KEY"),
         _ => None,
     }
 }
@@ -189,6 +197,63 @@ struct GenerateVideoParams {
     resolution: Option<String>,
     #[serde(default)]
     source_image_url: Option<String>,
+    /// Base64-encoded first frame image (Veo only).
+    #[serde(default)]
+    image: Option<String>,
+    /// Base64-encoded last frame image (Veo only).
+    #[serde(default)]
+    last_frame: Option<String>,
+    /// File path to first frame image (Veo only).
+    #[serde(default)]
+    image_path: Option<String>,
+    /// File path to last frame image (Veo only).
+    #[serde(default)]
+    last_frame_path: Option<String>,
+    /// File path to video for extension/continuation (Veo only).
+    #[serde(default)]
+    video_path: Option<String>,
+    /// File path to reference image 1 (Veo only, up to 3).
+    #[serde(default)]
+    reference_image_path_1: Option<String>,
+    /// File path to reference image 2 (Veo only).
+    #[serde(default)]
+    reference_image_path_2: Option<String>,
+    /// File path to reference image 3 (Veo only).
+    #[serde(default)]
+    reference_image_path_3: Option<String>,
+    /// URL of last frame image for interpolation (fal.ai Wan FLF2V).
+    #[serde(default)]
+    last_frame_url: Option<String>,
+    /// Negative prompt — what to avoid (Veo, fal.ai).
+    #[serde(default)]
+    negative_prompt: Option<String>,
+    /// Person generation policy: "allow_all" or "allow_adult" (Veo only).
+    #[serde(default)]
+    person_generation: Option<String>,
+    /// GCS bucket URI for video output (Vertex AI only).
+    #[serde(default)]
+    storage_uri: Option<String>,
+    /// Enable prompt enhancement (Vertex AI only).
+    #[serde(default)]
+    enhance_prompt: Option<bool>,
+    /// Enable audio generation (Vertex AI only).
+    #[serde(default)]
+    generate_audio: Option<bool>,
+    /// Seed for deterministic generation (Seedance).
+    #[serde(default)]
+    seed: Option<i64>,
+    /// Lock camera position (Seedance).
+    #[serde(default)]
+    camera_fixed: Option<bool>,
+    /// Enable prompt enhancement (MiniMax).
+    #[serde(default)]
+    prompt_optimizer: Option<bool>,
+    /// URL of subject reference image for character consistency (MiniMax direct API).
+    #[serde(default)]
+    subject_reference_url: Option<String>,
+    /// Model variant (e.g. "hailuo-std", "seedance-pro", "hailuo-2.3-fast").
+    #[serde(default)]
+    model: Option<String>,
 }
 
 /// MCP server for media generation.
@@ -394,7 +459,7 @@ impl McpServer {
                         },
                         "provider": {
                             "type": "string",
-                            "enum": ["grok", "openai", "veo", "kling", "fal"],
+                            "enum": ["grok", "openai", "veo", "kling", "fal", "minimax"],
                             "description": "AI provider to use (default: grok)"
                         },
                         "output_path": {
@@ -409,7 +474,7 @@ impl McpServer {
                         },
                         "aspect_ratio": {
                             "type": "string",
-                            "description": "Aspect ratio (e.g., 16:9). Supported by Grok and Sora."
+                            "description": "Aspect ratio (e.g., 16:9). Supported by Grok, Sora, fal.ai, and Veo."
                         },
                         "resolution": {
                             "type": "string",
@@ -417,7 +482,84 @@ impl McpServer {
                         },
                         "source_image_url": {
                             "type": "string",
-                            "description": "URL of source image for image-to-video (Grok only)"
+                            "description": "URL of source image for image-to-video (Grok, Kling, fal.ai, Sora)"
+                        },
+                        "image": {
+                            "type": "string",
+                            "description": "Base64-encoded first frame image (Veo only). Duration is forced to 8s when using frames."
+                        },
+                        "last_frame": {
+                            "type": "string",
+                            "description": "Base64-encoded last frame image (Veo only). Duration is forced to 8s when using frames."
+                        },
+                        "image_path": {
+                            "type": "string",
+                            "description": "File path to first frame image (Veo only). Takes precedence over base64 image parameter."
+                        },
+                        "last_frame_path": {
+                            "type": "string",
+                            "description": "File path to last frame image (Veo only). Takes precedence over base64 last_frame parameter."
+                        },
+                        "video_path": {
+                            "type": "string",
+                            "description": "File path to video for extension/continuation (Veo only). Extends the video by up to 8s."
+                        },
+                        "reference_image_path_1": {
+                            "type": "string",
+                            "description": "File path to reference image 1 for style/asset guidance (Veo only, up to 3 total)."
+                        },
+                        "reference_image_path_2": {
+                            "type": "string",
+                            "description": "File path to reference image 2 (Veo only)."
+                        },
+                        "reference_image_path_3": {
+                            "type": "string",
+                            "description": "File path to reference image 3 (Veo only)."
+                        },
+                        "last_frame_url": {
+                            "type": "string",
+                            "description": "URL of last frame image for interpolation (fal.ai Wan FLF2V model)"
+                        },
+                        "negative_prompt": {
+                            "type": "string",
+                            "description": "Describes what to avoid in the video (Veo, fal.ai)."
+                        },
+                        "person_generation": {
+                            "type": "string",
+                            "enum": ["allow_all", "allow_adult"],
+                            "description": "Person generation policy (Veo only)."
+                        },
+                        "storage_uri": {
+                            "type": "string",
+                            "description": "GCS bucket URI for video output (Vertex AI only, e.g., gs://my-bucket/output/)"
+                        },
+                        "enhance_prompt": {
+                            "type": "boolean",
+                            "description": "Enable prompt enhancement (Vertex AI only)"
+                        },
+                        "generate_audio": {
+                            "type": "boolean",
+                            "description": "Enable audio generation (Vertex AI, Seedance 1.5 via fal.ai)"
+                        },
+                        "seed": {
+                            "type": "integer",
+                            "description": "Seed for deterministic generation (Seedance via fal.ai)"
+                        },
+                        "camera_fixed": {
+                            "type": "boolean",
+                            "description": "Lock camera position (Seedance via fal.ai)"
+                        },
+                        "prompt_optimizer": {
+                            "type": "boolean",
+                            "description": "Enable prompt enhancement (MiniMax Hailuo)"
+                        },
+                        "subject_reference_url": {
+                            "type": "string",
+                            "description": "URL of subject reference image for character consistency (MiniMax direct API only)"
+                        },
+                        "model": {
+                            "type": "string",
+                            "description": "Model variant. fal: wan-2.1, hailuo-std, hailuo-pro, hailuo-fast, seedance-pro, seedance-lite, seedance-1.5, ltx-video, kling-std, kling-pro. minimax: hailuo-2.3, hailuo-2.3-fast."
                         }
                     },
                     "required": ["prompt", "output_path"]
@@ -548,18 +690,27 @@ impl McpServer {
                     "capabilities": {
                         "duration": true,
                         "aspect_ratio": true,
-                        "image_to_video": false
+                        "image_to_video": true
                     }
                 },
                 {
                     "name": "veo",
-                    "api_key_env": "GOOGLE_API_KEY",
-                    "api_key_set": check_key("GOOGLE_API_KEY"),
+                    "api_key_env": if std::env::var("VERTEX_AI_PROJECT").is_ok() { "VERTEX_AI_PROJECT" } else { "GOOGLE_API_KEY" },
+                    "api_key_set": if std::env::var("VERTEX_AI_PROJECT").is_ok() { true } else { check_key("GOOGLE_API_KEY") },
+                    "backend": if std::env::var("VERTEX_AI_PROJECT").is_ok() { "vertex" } else { "gemini" },
                     "capabilities": {
-                        "duration": false,
-                        "aspect_ratio": false,
+                        "image_to_video": true,
+                        "first_last_frame": true,
+                        "video_extension": true,
+                        "reference_images": true,
+                        "negative_prompt": true,
+                        "person_generation": true,
+                        "duration": true,
+                        "aspect_ratio": true,
                         "resolution": true,
-                        "image_to_video": false
+                        "generate_audio": std::env::var("VERTEX_AI_PROJECT").is_ok(),
+                        "enhance_prompt": std::env::var("VERTEX_AI_PROJECT").is_ok(),
+                        "storage_uri": std::env::var("VERTEX_AI_PROJECT").is_ok()
                     }
                 },
                 {
@@ -576,10 +727,34 @@ impl McpServer {
                     "name": "fal",
                     "api_key_env": "FAL_KEY",
                     "api_key_set": check_key("FAL_KEY"),
+                    "models": ["wan-2.1", "hailuo-std", "hailuo-pro", "hailuo-fast",
+                               "seedance-pro", "seedance-lite", "seedance-1.5",
+                               "ltx-video", "kling-std", "kling-pro"],
                     "capabilities": {
                         "duration": true,
                         "aspect_ratio": true,
-                        "image_to_video": true
+                        "image_to_video": true,
+                        "first_last_frame": true,
+                        "negative_prompt": true,
+                        "seed": true,
+                        "camera_fixed": true,
+                        "prompt_optimizer": true,
+                        "generate_audio": true,
+                        "resolution": true
+                    }
+                },
+                {
+                    "name": "minimax",
+                    "api_key_env": "MINIMAX_API_KEY",
+                    "api_key_set": check_key("MINIMAX_API_KEY"),
+                    "models": ["hailuo-2.3", "hailuo-2.3-fast"],
+                    "capabilities": {
+                        "duration": false,
+                        "resolution": true,
+                        "image_to_video": true,
+                        "first_last_frame": true,
+                        "subject_reference": true,
+                        "prompt_optimizer": true
                     }
                 }
             ]
@@ -807,6 +982,7 @@ impl McpServer {
                 "veo" => generate_video_with_veo(&params).await,
                 "kling" => generate_video_with_kling(&params).await,
                 "fal" => generate_video_with_fal(&params).await,
+                "minimax" => generate_video_with_minimax(&params).await,
                 _ => Err(format!("Unknown video provider: {}", provider_name)),
             }
         })
@@ -1174,14 +1350,96 @@ async fn generate_video_with_veo(
 ) -> Result<VideoGenerationResult, String> {
     use crate::video::{VideoGenerationRequest, VideoProvider};
     use crate::VeoProvider;
+    use base64::Engine;
 
     let mut request = VideoGenerationRequest::new(&params.prompt);
 
     if let Some(res) = &params.resolution {
         request = request.with_resolution(res.clone());
     }
+    if let Some(d) = params.duration {
+        request = request.with_duration(d);
+    }
+    if let Some(ar) = &params.aspect_ratio {
+        request = request.with_aspect_ratio(ar.clone());
+    }
 
-    let provider = VeoProvider::builder().build().map_err(|e| e.to_string())?;
+    // Resolve first frame: path takes precedence over base64
+    if let Some(path) = &params.image_path {
+        let data = std::fs::read(path).map_err(|e| format!("Failed to read image_path: {}", e))?;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+        request = request.with_image(b64);
+    } else if let Some(b64) = &params.image {
+        let bytes =
+            decode_base64_lenient(b64).map_err(|e| format!("Invalid base64 in image: {}", e))?;
+        let clean_b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        request = request.with_image(clean_b64);
+    }
+
+    // Resolve last frame: path takes precedence over base64
+    if let Some(path) = &params.last_frame_path {
+        let data =
+            std::fs::read(path).map_err(|e| format!("Failed to read last_frame_path: {}", e))?;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+        request = request.with_last_frame(b64);
+    } else if let Some(b64) = &params.last_frame {
+        let bytes = decode_base64_lenient(b64)
+            .map_err(|e| format!("Invalid base64 in last_frame: {}", e))?;
+        let clean_b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        request = request.with_last_frame(clean_b64);
+    }
+
+    // Resolve video for extension/continuation
+    if let Some(path) = &params.video_path {
+        let data = std::fs::read(path).map_err(|e| format!("Failed to read video_path: {}", e))?;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+        request = request.with_video(b64);
+    }
+
+    // Resolve reference images (up to 3)
+    for (i, ref_path) in [
+        &params.reference_image_path_1,
+        &params.reference_image_path_2,
+        &params.reference_image_path_3,
+    ]
+    .iter()
+    .enumerate()
+    {
+        if let Some(path) = ref_path {
+            let data = std::fs::read(path)
+                .map_err(|e| format!("Failed to read reference_image_path_{}: {}", i + 1, e))?;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+            request = request.with_reference_image(b64);
+        }
+    }
+
+    // Pass through Veo-specific text params
+    if let Some(neg) = &params.negative_prompt {
+        request = request.with_negative_prompt(neg.clone());
+    }
+    if let Some(pg) = &params.person_generation {
+        request = request.with_person_generation(pg.clone());
+    }
+
+    // Pass through Vertex AI-specific params
+    if let Some(uri) = &params.storage_uri {
+        request = request.with_storage_uri(uri.clone());
+    }
+    if let Some(enhance) = params.enhance_prompt {
+        request = request.with_enhance_prompt(enhance);
+    }
+    if let Some(audio) = params.generate_audio {
+        request = request.with_generate_audio(audio);
+    }
+
+    let mut builder = VeoProvider::builder();
+    if let Ok(project) = std::env::var("VERTEX_AI_PROJECT") {
+        builder = builder.project(project);
+        if let Ok(location) = std::env::var("VERTEX_AI_LOCATION") {
+            builder = builder.location(location);
+        }
+    }
+    let provider = builder.build().map_err(|e| e.to_string())?;
 
     let video = provider
         .generate(&request)
@@ -1222,6 +1480,9 @@ async fn generate_video_with_openai(
     }
     if let Some(ar) = &params.aspect_ratio {
         request = request.with_aspect_ratio(ar.clone());
+    }
+    if let Some(url) = &params.source_image_url {
+        request = request.with_source_image(url.clone());
     }
 
     let provider = SoraProvider::builder().build().map_err(|e| e.to_string())?;
@@ -1314,10 +1575,51 @@ async fn generate_video_with_fal(
     if let Some(url) = &params.source_image_url {
         request = request.with_source_image(url.clone());
     }
+    if let Some(neg) = &params.negative_prompt {
+        request = request.with_negative_prompt(neg.clone());
+    }
+    if let Some(url) = &params.last_frame_url {
+        request = request.with_last_frame_url(url.clone());
+    }
+    if let Some(seed) = params.seed {
+        request = request.with_seed(seed);
+    }
+    if let Some(fixed) = params.camera_fixed {
+        request = request.with_camera_fixed(fixed);
+    }
+    if let Some(optimize) = params.prompt_optimizer {
+        request = request.with_prompt_optimizer(optimize);
+    }
+    if let Some(audio) = params.generate_audio {
+        request = request.with_generate_audio(audio);
+    }
+    if let Some(res) = &params.resolution {
+        request = request.with_resolution(res.clone());
+    }
 
-    let provider = FalVideoProvider::builder()
-        .build()
-        .map_err(|e| e.to_string())?;
+    let mut builder = FalVideoProvider::builder();
+    if let Some(model_name) = &params.model {
+        use crate::FalVideoModel;
+        let model = match model_name.as_str() {
+            "wan-2.1" | "wan" => FalVideoModel::Wan21,
+            "wan-2.1-i2v" => FalVideoModel::Wan21I2V,
+            "hailuo-std" | "hailuo" => FalVideoModel::Hailuo23Std,
+            "hailuo-pro" => FalVideoModel::Hailuo23Pro,
+            "hailuo-fast" => FalVideoModel::Hailuo23Fast,
+            "seedance-pro" | "seedance" => FalVideoModel::SeedancePro,
+            "seedance-lite" => FalVideoModel::SeedanceLite,
+            "seedance-1.5" | "seedance-1.5-pro" => FalVideoModel::Seedance15Pro,
+            "ltx-video" | "ltx" => FalVideoModel::LtxVideo,
+            "kling-std" => FalVideoModel::KlingStd,
+            "kling-pro" => FalVideoModel::KlingPro,
+            "minimax" => FalVideoModel::Hailuo23Std,
+            other if other.starts_with("fal-ai/") => FalVideoModel::Custom(other.to_string()),
+            other => return Err(format!("Unknown fal.ai video model: {other}")),
+        };
+        builder = builder.model(model);
+    }
+
+    let provider = builder.build().map_err(|e| e.to_string())?;
 
     let video = provider
         .generate(&request)
@@ -1342,6 +1644,72 @@ async fn generate_video_with_fal(
     _params: &GenerateVideoParams,
 ) -> Result<VideoGenerationResult, String> {
     Err("fal.ai video provider not enabled".to_string())
+}
+
+#[cfg(feature = "minimax-video")]
+async fn generate_video_with_minimax(
+    params: &GenerateVideoParams,
+) -> Result<VideoGenerationResult, String> {
+    use crate::video::{VideoGenerationRequest, VideoProvider};
+    use crate::MiniMaxVideoProvider;
+
+    let mut request = VideoGenerationRequest::new(&params.prompt);
+
+    if let Some(url) = &params.source_image_url {
+        request = request.with_source_image(url.clone());
+    }
+    if let Some(url) = &params.last_frame_url {
+        request = request.with_last_frame_url(url.clone());
+    }
+    if let Some(res) = &params.resolution {
+        request = request.with_resolution(res.clone());
+    }
+    if let Some(optimize) = params.prompt_optimizer {
+        request = request.with_prompt_optimizer(optimize);
+    }
+    if let Some(url) = &params.subject_reference_url {
+        if url.is_empty() {
+            return Err("subject_reference_url must not be empty".to_string());
+        }
+        request = request.with_subject_reference("character", url.clone());
+    }
+
+    let mut builder = MiniMaxVideoProvider::builder();
+    if let Some(model_name) = &params.model {
+        use crate::MiniMaxVideoModel;
+        let model = match model_name.as_str() {
+            "hailuo-2.3" | "hailuo" => MiniMaxVideoModel::Hailuo23,
+            "hailuo-2.3-fast" | "hailuo-fast" => MiniMaxVideoModel::Hailuo23Fast,
+            other => return Err(format!("Unknown MiniMax video model: {other}")),
+        };
+        builder = builder.model(model);
+    }
+
+    let provider = builder.build().map_err(|e| e.to_string())?;
+
+    let video = provider
+        .generate(&request)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    video.save(&params.output_path).map_err(|e| e.to_string())?;
+
+    Ok(VideoGenerationResult {
+        success: true,
+        provider: "minimax".to_string(),
+        output_path: params.output_path.clone(),
+        size_bytes: video.size(),
+        model: video.metadata.model,
+        duration_ms: video.metadata.duration_ms,
+        video_duration_secs: video.metadata.video_duration_secs,
+    })
+}
+
+#[cfg(not(feature = "minimax-video"))]
+async fn generate_video_with_minimax(
+    _params: &GenerateVideoParams,
+) -> Result<VideoGenerationResult, String> {
+    Err("MiniMax video provider not enabled".to_string())
 }
 
 /// Validate image generation params against provider capabilities.
@@ -1463,7 +1831,7 @@ mod tests {
         let image_providers = providers["image_providers"].as_array().unwrap();
         let video_providers = providers["video_providers"].as_array().unwrap();
         assert_eq!(image_providers.len(), 6);
-        assert_eq!(video_providers.len(), 5);
+        assert_eq!(video_providers.len(), 6);
 
         // Verify each image provider has required fields
         for p in image_providers {
@@ -1783,9 +2151,16 @@ mod tests {
         assert_eq!(api_key_env_var("flux"), Some("BFL_API_KEY"));
         assert_eq!(api_key_env_var("grok"), Some("XAI_API_KEY"));
         assert_eq!(api_key_env_var("openai"), Some("OPENAI_API_KEY"));
-        assert_eq!(api_key_env_var("veo"), Some("GOOGLE_API_KEY"));
+        // Veo returns None when VERTEX_AI_PROJECT is set (uses gcloud auth),
+        // otherwise falls back to GOOGLE_API_KEY
+        if std::env::var("VERTEX_AI_PROJECT").is_ok() {
+            assert_eq!(api_key_env_var("veo"), None);
+        } else {
+            assert_eq!(api_key_env_var("veo"), Some("GOOGLE_API_KEY"));
+        }
         assert_eq!(api_key_env_var("kling"), Some("KLING_ACCESS_KEY"));
         assert_eq!(api_key_env_var("fal"), Some("FAL_KEY"));
+        assert_eq!(api_key_env_var("minimax"), Some("MINIMAX_API_KEY"));
         assert_eq!(api_key_env_var("unknown"), None);
     }
 

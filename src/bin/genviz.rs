@@ -26,7 +26,7 @@ enum Commands {
     Image(ImageArgs),
 
     /// Generate a video from a text prompt
-    Video(VideoArgs),
+    Video(Box<VideoArgs>),
 
     /// List available providers
     Providers,
@@ -94,11 +94,87 @@ struct VideoArgs {
     #[arg(long)]
     aspect_ratio: Option<String>,
 
-    /// Source image URL for image-to-video generation
+    /// Source image URL for image-to-video (Grok, Kling, fal.ai, Sora)
     #[arg(long)]
     source_image_url: Option<String>,
 
-    /// Model variant (grok: grok-imagine-video; openai: sora-2; veo: veo-3.1-generate-preview; fal: wan-2.1, wan-2.1-i2v, minimax, ltx-video)
+    /// URL of last frame image for interpolation (fal.ai Wan FLF2V)
+    #[arg(long)]
+    last_frame_url: Option<String>,
+
+    /// First frame image file path (Veo only, duration forced to 8s)
+    #[arg(long)]
+    image: Option<PathBuf>,
+
+    /// Last frame image file path (Veo only, duration forced to 8s)
+    #[arg(long)]
+    last_frame: Option<PathBuf>,
+
+    /// Video file path for extension/continuation (Veo only, extends by up to 8s)
+    #[arg(long)]
+    video: Option<PathBuf>,
+
+    /// Reference image 1 for style/asset guidance (Veo only, up to 3 total)
+    #[arg(long)]
+    reference_image_1: Option<PathBuf>,
+
+    /// Reference image 2 (Veo only)
+    #[arg(long)]
+    reference_image_2: Option<PathBuf>,
+
+    /// Reference image 3 (Veo only)
+    #[arg(long)]
+    reference_image_3: Option<PathBuf>,
+
+    /// Negative prompt — what to avoid (Veo, fal.ai)
+    #[arg(long)]
+    negative_prompt: Option<String>,
+
+    /// Person generation policy: allow_all or allow_adult (Veo only)
+    #[arg(long)]
+    person_generation: Option<String>,
+
+    /// Google Cloud project ID for Vertex AI backend
+    #[arg(long, env = "VERTEX_AI_PROJECT")]
+    vertex_project: Option<String>,
+
+    /// Google Cloud location for Vertex AI backend (default: us-central1)
+    #[arg(long, env = "VERTEX_AI_LOCATION")]
+    vertex_location: Option<String>,
+
+    /// GCS bucket URI for video output (Vertex AI only)
+    #[arg(long)]
+    storage_uri: Option<String>,
+
+    /// Enable prompt enhancement (Vertex AI only)
+    #[arg(long)]
+    enhance_prompt: Option<bool>,
+
+    /// Enable audio generation (Vertex AI only)
+    #[arg(long)]
+    generate_audio: Option<bool>,
+
+    /// Seed for deterministic generation (Seedance via fal.ai)
+    #[arg(long)]
+    seed: Option<i64>,
+
+    /// Lock camera position (Seedance via fal.ai)
+    #[arg(long)]
+    camera_fixed: Option<bool>,
+
+    /// Enable prompt enhancement (MiniMax Hailuo)
+    #[arg(long)]
+    prompt_optimizer: Option<bool>,
+
+    /// URL of subject reference image for character consistency (MiniMax direct API)
+    #[arg(long)]
+    subject_reference_url: Option<String>,
+
+    /// Video resolution (e.g., "720p", "1080p")
+    #[arg(long)]
+    resolution: Option<String>,
+
+    /// Model variant (grok: grok-imagine-video; openai: sora-2; veo: veo-3.1-generate-preview; fal: wan-2.1, wan-2.1-i2v, hailuo-std, hailuo-pro, hailuo-fast, seedance-pro, seedance-lite, seedance-1.5, ltx-video, kling-std, kling-pro; minimax: hailuo-2.3, hailuo-2.3-fast)
     #[arg(long)]
     model: Option<String>,
 }
@@ -120,6 +196,7 @@ enum VideoProviderArg {
     Veo,
     Kling,
     Fal,
+    Minimax,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -169,7 +246,7 @@ async fn main() -> anyhow::Result<()> {
             generate_image(args, cli.json).await?;
         }
         Commands::Video(args) => {
-            generate_video(args, cli.json).await?;
+            generate_video(*args, cli.json).await?;
         }
         Commands::Providers => {
             list_providers(cli.json)?;
@@ -458,6 +535,13 @@ async fn generate_image(args: ImageArgs, json_output: bool) -> anyhow::Result<()
 }
 
 async fn generate_video(args: VideoArgs, json_output: bool) -> anyhow::Result<()> {
+    use base64::Engine;
+
+    // Validate provider-specific flags
+    if args.subject_reference_url.is_some() && !matches!(args.provider, VideoProviderArg::Minimax) {
+        anyhow::bail!("--subject-reference-url is only supported by the minimax provider");
+    }
+
     let mut request = VideoGenerationRequest::new(&args.prompt);
 
     if let Some(d) = args.duration {
@@ -468,6 +552,67 @@ async fn generate_video(args: VideoArgs, json_output: bool) -> anyhow::Result<()
     }
     if let Some(url) = args.source_image_url {
         request = request.with_source_image(url);
+    }
+    if let Some(url) = args.last_frame_url {
+        request = request.with_last_frame_url(url);
+    }
+    if let Some(seed) = args.seed {
+        request = request.with_seed(seed);
+    }
+    if let Some(fixed) = args.camera_fixed {
+        request = request.with_camera_fixed(fixed);
+    }
+    if let Some(optimize) = args.prompt_optimizer {
+        request = request.with_prompt_optimizer(optimize);
+    }
+    if let Some(url) = args.subject_reference_url {
+        request = request.with_subject_reference("character", url);
+    }
+    if let Some(res) = args.resolution {
+        request = request.with_resolution(res);
+    }
+
+    // Read and base64-encode first frame image
+    if let Some(ref path) = args.image {
+        let data = std::fs::read(path)?;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+        request = request.with_image(b64);
+    }
+
+    // Read and base64-encode last frame image
+    if let Some(ref path) = args.last_frame {
+        let data = std::fs::read(path)?;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+        request = request.with_last_frame(b64);
+    }
+
+    // Read and base64-encode video for extension
+    if let Some(ref path) = args.video {
+        let data = std::fs::read(path)?;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+        request = request.with_video(b64);
+    }
+
+    // Read and base64-encode reference images
+    for path in [
+        &args.reference_image_1,
+        &args.reference_image_2,
+        &args.reference_image_3,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let data = std::fs::read(path)?;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+        request = request.with_reference_image(b64);
+    }
+
+    // Pass through Veo-specific text params
+    if let Some(ref neg) = args.negative_prompt {
+        request = request.with_negative_prompt(neg.clone());
+    }
+    if let Some(ref pg) = args.person_generation {
+        request = request.with_person_generation(pg.clone());
     }
 
     if !json_output {
@@ -533,7 +678,24 @@ async fn generate_video(args: VideoArgs, json_output: bool) -> anyhow::Result<()
                     };
                     builder = builder.model(model);
                 }
+                // Configure Vertex AI backend if project specified
+                if let Some(ref project) = args.vertex_project {
+                    builder = builder.project(project.clone());
+                    if let Some(ref location) = args.vertex_location {
+                        builder = builder.location(location.clone());
+                    }
+                }
                 let provider = builder.build()?;
+                // Pass through Vertex AI-specific params
+                if let Some(ref uri) = args.storage_uri {
+                    request = request.with_storage_uri(uri.clone());
+                }
+                if let Some(enhance) = args.enhance_prompt {
+                    request = request.with_enhance_prompt(enhance);
+                }
+                if let Some(audio) = args.generate_audio {
+                    request = request.with_generate_audio(audio);
+                }
                 provider.generate(&request).await?
             }
             #[cfg(not(feature = "veo"))]
@@ -561,13 +723,21 @@ async fn generate_video(args: VideoArgs, json_output: bool) -> anyhow::Result<()
                     let model = match m.as_str() {
                         "wan-2.1" | "wan" => genviz::FalVideoModel::Wan21,
                         "wan-2.1-i2v" | "wan-i2v" => genviz::FalVideoModel::Wan21I2V,
-                        "minimax" => genviz::FalVideoModel::MiniMax,
+                        "hailuo-std" | "hailuo" => genviz::FalVideoModel::Hailuo23Std,
+                        "hailuo-pro" => genviz::FalVideoModel::Hailuo23Pro,
+                        "hailuo-fast" => genviz::FalVideoModel::Hailuo23Fast,
+                        "seedance-pro" | "seedance" => genviz::FalVideoModel::SeedancePro,
+                        "seedance-lite" => genviz::FalVideoModel::SeedanceLite,
+                        "seedance-1.5" | "seedance-1.5-pro" => genviz::FalVideoModel::Seedance15Pro,
+                        "minimax" => genviz::FalVideoModel::Hailuo23Std, // backward compat alias
                         "ltx-video" | "ltx" => genviz::FalVideoModel::LtxVideo,
+                        "kling-std" | "kling" => genviz::FalVideoModel::KlingStd,
+                        "kling-pro" => genviz::FalVideoModel::KlingPro,
                         s if s.starts_with("fal-ai/") => {
                             genviz::FalVideoModel::Custom(s.to_string())
                         }
                         _ => anyhow::bail!(
-                            "Unknown fal.ai video model: {}. Options: wan-2.1, wan-2.1-i2v, minimax, ltx-video, or fal-ai/...",
+                            "Unknown fal.ai video model: {}. Options: wan-2.1, wan-2.1-i2v, hailuo-std, hailuo-pro, hailuo-fast, seedance-pro, seedance-lite, seedance-1.5, ltx-video, kling-std, kling-pro, or fal-ai/...",
                             m
                         ),
                     };
@@ -579,6 +749,31 @@ async fn generate_video(args: VideoArgs, json_output: bool) -> anyhow::Result<()
             #[cfg(not(feature = "fal-video"))]
             {
                 anyhow::bail!("fal.ai video provider not enabled");
+            }
+        }
+        VideoProviderArg::Minimax => {
+            #[cfg(feature = "minimax-video")]
+            {
+                let mut builder = genviz::MiniMaxVideoProvider::builder();
+                if let Some(ref m) = args.model {
+                    let model = match m.as_str() {
+                        "hailuo-2.3" | "hailuo" => genviz::MiniMaxVideoModel::Hailuo23,
+                        "hailuo-2.3-fast" | "hailuo-fast" => {
+                            genviz::MiniMaxVideoModel::Hailuo23Fast
+                        }
+                        _ => anyhow::bail!(
+                            "Unknown MiniMax video model: {}. Options: hailuo-2.3, hailuo-2.3-fast",
+                            m
+                        ),
+                    };
+                    builder = builder.model(model);
+                }
+                let provider = builder.build()?;
+                provider.generate(&request).await?
+            }
+            #[cfg(not(feature = "minimax-video"))]
+            {
+                anyhow::bail!("MiniMax video provider not enabled");
             }
         }
     };
@@ -693,10 +888,10 @@ fn list_providers(json_output: bool) -> anyhow::Result<()> {
             enabled: cfg!(feature = "openai-video"),
         },
         ProviderInfo {
-            name: "Veo (Google)",
+            name: "Veo (Google) — Gemini Dev API or Vertex AI",
             kind: "veo",
             media_type: "video",
-            env_var: "GOOGLE_API_KEY",
+            env_var: "GOOGLE_API_KEY or VERTEX_AI_PROJECT",
             enabled: cfg!(feature = "veo"),
         },
         ProviderInfo {
@@ -707,11 +902,18 @@ fn list_providers(json_output: bool) -> anyhow::Result<()> {
             enabled: cfg!(feature = "kling-video"),
         },
         ProviderInfo {
-            name: "fal.ai (wan-2.1, minimax, ltx-video)",
+            name: "fal.ai (wan-2.1, hailuo-std/pro/fast, seedance-pro/lite/1.5, ltx-video, kling-std/pro)",
             kind: "fal",
             media_type: "video",
             env_var: "FAL_KEY",
             enabled: cfg!(feature = "fal-video"),
+        },
+        ProviderInfo {
+            name: "MiniMax Hailuo (hailuo-2.3, hailuo-2.3-fast) — subject reference support",
+            kind: "minimax",
+            media_type: "video",
+            env_var: "MINIMAX_API_KEY",
+            enabled: cfg!(feature = "minimax-video"),
         },
     ];
 

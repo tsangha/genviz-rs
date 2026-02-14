@@ -27,12 +27,13 @@ kling-image = ["dep:base64", "dep:jsonwebtoken"]
 fal-image = ["dep:base64"]
 
 # Video generation providers
-video = ["grok-video", "veo", "openai-video", "kling-video", "fal-video"]
+video = ["grok-video", "veo", "openai-video", "kling-video", "fal-video", "minimax-video"]
 grok-video = ["dep:base64"]
 veo = ["dep:base64"]
 openai-video = ["dep:base64"]
 kling-video = ["dep:base64", "dep:jsonwebtoken"]
 fal-video = ["dep:base64"]
+minimax-video = ["dep:base64"]
 
 # CLI binary
 cli = ["dep:clap", "dep:anyhow", "dep:tracing-subscriber", "dep:base64", "image", "video"]
@@ -47,7 +48,7 @@ async-trait = "0.1"
 tracing = "0.1"
 base64 = { version = "0.22", optional = true }
 jsonwebtoken = { version = "9", optional = true }
-clap = { version = "4", features = ["derive"], optional = true }
+clap = { version = "4", features = ["derive", "env"], optional = true }
 anyhow = { version = "1", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"], optional = true }
 

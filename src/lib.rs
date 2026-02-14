@@ -48,7 +48,9 @@
 //! - `grok-video`: Grok Imagine Video (xAI)
 //! - `openai-video`: Sora (OpenAI)
 //! - `veo`: Veo (Google)
-//! - `fal-video`: fal.ai (Wan, MiniMax, LTX Video)
+//! - `kling-video`: Kling AI (Kuaishou)
+//! - `fal-video`: fal.ai (Wan, Hailuo 2.3, Seedance, LTX Video, Kling)
+//! - `minimax-video`: MiniMax Hailuo (direct API, subject reference)
 //!
 //! ## Meta Features
 //! - `image`: All image providers
@@ -98,8 +100,8 @@ pub use image::providers::{FalImageModel, FalImageProvider, FalImageProviderBuil
 // Re-export commonly used video types
 #[cfg(feature = "video")]
 pub use video::{
-    GeneratedVideo, VideoGenerationRequest, VideoMetadata, VideoProvider, VideoProviderExt,
-    VideoProviderKind,
+    GeneratedVideo, SubjectReference, VideoGenerationRequest, VideoMetadata, VideoProvider,
+    VideoProviderExt, VideoProviderKind,
 };
 
 #[cfg(feature = "grok-video")]
@@ -109,13 +111,16 @@ pub use video::providers::{GrokVideoModel, GrokVideoProvider, GrokVideoProviderB
 pub use video::providers::{SoraModel, SoraProvider, SoraProviderBuilder};
 
 #[cfg(feature = "veo")]
-pub use video::providers::{VeoModel, VeoProvider, VeoProviderBuilder};
+pub use video::providers::{VeoBackend, VeoModel, VeoProvider, VeoProviderBuilder};
 
 #[cfg(feature = "kling-video")]
 pub use video::providers::{KlingVideoModel, KlingVideoProvider, KlingVideoProviderBuilder};
 
 #[cfg(feature = "fal-video")]
 pub use video::providers::{FalVideoModel, FalVideoProvider, FalVideoProviderBuilder};
+
+#[cfg(feature = "minimax-video")]
+pub use video::providers::{MiniMaxVideoModel, MiniMaxVideoProvider, MiniMaxVideoProviderBuilder};
 
 /// Prelude for convenient imports.
 pub mod prelude {
@@ -161,4 +166,7 @@ pub mod prelude {
 
     #[cfg(feature = "fal-video")]
     pub use crate::video::providers::FalVideoProvider;
+
+    #[cfg(feature = "minimax-video")]
+    pub use crate::video::providers::MiniMaxVideoProvider;
 }

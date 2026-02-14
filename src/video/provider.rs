@@ -21,6 +21,7 @@ pub trait VideoProvider: Send + Sync {
             VideoProviderKind::OpenAI => "Sora (OpenAI)",
             VideoProviderKind::Kling => "Kling AI (Kuaishou)",
             VideoProviderKind::Fal => "fal.ai",
+            VideoProviderKind::MiniMax => "MiniMax Hailuo (MiniMax)",
         }
     }
 

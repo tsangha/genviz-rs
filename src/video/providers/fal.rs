@@ -17,10 +17,26 @@ pub enum FalVideoModel {
     Wan21,
     /// Wan 2.1 - image-to-video generation.
     Wan21I2V,
-    /// MiniMax Video 01 - image-to-video generation.
-    MiniMax,
+    /// MiniMax Hailuo 2.3 Standard - text-to-video generation.
+    Hailuo23Std,
+    /// MiniMax Hailuo 2.3 Pro - text-to-video generation.
+    Hailuo23Pro,
+    /// MiniMax Hailuo 2.3 Fast - image-to-video generation.
+    Hailuo23Fast,
+    /// ByteDance Seedance V1 Pro - text-to-video generation.
+    SeedancePro,
+    /// ByteDance Seedance V1 Lite - text-to-video generation.
+    SeedanceLite,
+    /// ByteDance Seedance V1.5 Pro - text-to-video generation.
+    Seedance15Pro,
     /// LTX Video 2 - text-to-video generation.
     LtxVideo,
+    /// Wan 2.1 - first-last-frame-to-video (requires first_frame + last_frame URLs).
+    Wan21FLF2V,
+    /// Kling V1.6 Standard via fal.ai.
+    KlingStd,
+    /// Kling V1.6 Pro via fal.ai.
+    KlingPro,
     /// Custom fal.ai video model ID.
     Custom(String),
 }
@@ -31,9 +47,48 @@ impl FalVideoModel {
         match self {
             Self::Wan21 => "fal-ai/wan-t2v",
             Self::Wan21I2V => "fal-ai/wan-i2v",
-            Self::MiniMax => "fal-ai/minimax/video-01/image-to-video",
+            Self::Hailuo23Std => "fal-ai/minimax/hailuo-2.3/standard/text-to-video",
+            Self::Hailuo23Pro => "fal-ai/minimax/hailuo-2.3/pro/text-to-video",
+            Self::Hailuo23Fast => "fal-ai/minimax/hailuo-2.3-fast/standard/image-to-video",
+            Self::SeedancePro => "fal-ai/bytedance/seedance/v1/pro/text-to-video",
+            Self::SeedanceLite => "fal-ai/bytedance/seedance/v1/lite/text-to-video",
+            Self::Seedance15Pro => "fal-ai/bytedance/seedance/v1.5/pro/text-to-video",
             Self::LtxVideo => "fal-ai/ltx-2/text-to-video",
+            Self::Wan21FLF2V => "fal-ai/wan-flf2v",
+            Self::KlingStd => "fal-ai/kling-video/v1.6/standard/text-to-video",
+            Self::KlingPro => "fal-ai/kling-video/v1.6/pro/text-to-video",
             Self::Custom(id) => id,
+        }
+    }
+}
+
+impl FalVideoModel {
+    /// Returns the image-to-video variant if applicable.
+    fn i2v_variant(&self) -> Option<Self> {
+        match self {
+            Self::Hailuo23Std => Some(Self::Custom(
+                "fal-ai/minimax/hailuo-2.3/standard/image-to-video".to_string(),
+            )),
+            Self::Hailuo23Pro => Some(Self::Custom(
+                "fal-ai/minimax/hailuo-2.3/pro/image-to-video".to_string(),
+            )),
+            Self::Hailuo23Fast => None, // already an i2v endpoint
+            Self::SeedancePro => Some(Self::Custom(
+                "fal-ai/bytedance/seedance/v1/pro/image-to-video".to_string(),
+            )),
+            Self::SeedanceLite => Some(Self::Custom(
+                "fal-ai/bytedance/seedance/v1/lite/image-to-video".to_string(),
+            )),
+            Self::Seedance15Pro => Some(Self::Custom(
+                "fal-ai/bytedance/seedance/v1.5/pro/image-to-video".to_string(),
+            )),
+            Self::KlingStd => Some(Self::Custom(
+                "fal-ai/kling-video/v1.6/standard/image-to-video".to_string(),
+            )),
+            Self::KlingPro => Some(Self::Custom(
+                "fal-ai/kling-video/v1.6/pro/image-to-video".to_string(),
+            )),
+            _ => None,
         }
     }
 }
@@ -107,8 +162,10 @@ impl FalVideoProviderBuilder {
 
 /// fal.ai video generation provider.
 ///
-/// Supports both text-to-video (Wan 2.1, LTX Video) and image-to-video
-/// (Wan 2.1 I2V, MiniMax) generation through fal.ai's queue API.
+/// Supports text-to-video (Wan 2.1, LTX Video, Hailuo 2.3, Seedance) and
+/// image-to-video (Wan 2.1 I2V, Hailuo 2.3, Seedance, Kling) generation
+/// through fal.ai's queue API.
+#[derive(Debug)]
 pub struct FalVideoProvider {
     client: reqwest::Client,
     api_key: String,
@@ -173,6 +230,14 @@ impl FalVideoProvider {
             image_url: request.source_image_url.clone(),
             duration: request.duration_secs,
             aspect_ratio: request.aspect_ratio.clone(),
+            negative_prompt: request.negative_prompt.clone(),
+            start_image_url: request.source_image_url.clone(),
+            end_image_url: request.last_frame_url.clone(),
+            resolution: request.resolution.clone(),
+            camera_fixed: request.camera_fixed,
+            seed: request.seed,
+            generate_audio: request.generate_audio,
+            prompt_optimizer: request.prompt_optimizer,
         };
 
         let response = self
@@ -320,15 +385,36 @@ impl VideoProvider for FalVideoProvider {
     async fn generate(&self, request: &VideoGenerationRequest) -> Result<GeneratedVideo> {
         let start = Instant::now();
 
+        // Validate i2v-only models require a source image
+        if matches!(self.model, FalVideoModel::Hailuo23Fast) && request.source_image_url.is_none() {
+            return Err(GenVizError::InvalidRequest(
+                "Hailuo 2.3 Fast is image-to-video only — provide source_image_url".into(),
+            ));
+        }
+
         // Determine the effective model for this request (handles auto-selection).
-        let effective_model = if request.source_image_url.is_some() {
+        let mut effective_model = if request.source_image_url.is_some() {
             match &self.model {
-                FalVideoModel::Wan21 => FalVideoModel::Wan21I2V,
+                FalVideoModel::Wan21 => {
+                    if request.last_frame_url.is_some() {
+                        FalVideoModel::Wan21FLF2V // first+last frame → FLF2V
+                    } else {
+                        FalVideoModel::Wan21I2V // first frame only → I2V
+                    }
+                }
                 other => other.clone(),
             }
         } else {
             self.model.clone()
         };
+
+        // If Kling model with source image, switch to i2v variant
+        if request.source_image_url.is_some() {
+            if let Some(i2v) = effective_model.i2v_variant() {
+                effective_model = i2v;
+            }
+        }
+
         let model_id = effective_model.as_str().to_string();
 
         let submit = self.submit(request, &model_id).await?;
@@ -383,6 +469,29 @@ struct FalVideoRequest {
     duration: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     aspect_ratio: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    negative_prompt: Option<String>,
+    /// Start image URL for FLF2V (first-last-frame-to-video).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    start_image_url: Option<String>,
+    /// End image URL for FLF2V (first-last-frame-to-video).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    end_image_url: Option<String>,
+    /// Video resolution for Seedance models ("480p", "720p", "1080p").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolution: Option<String>,
+    /// Lock camera position (Seedance).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    camera_fixed: Option<bool>,
+    /// Seed for deterministic generation (Seedance).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    seed: Option<i64>,
+    /// Enable audio generation (Seedance 1.5).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    generate_audio: Option<bool>,
+    /// Enable MiniMax Hailuo prompt enhancement.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prompt_optimizer: Option<bool>,
 }
 
 // Response types
@@ -425,8 +534,8 @@ mod tests {
         assert_eq!(FalVideoModel::Wan21.as_str(), "fal-ai/wan-t2v");
         assert_eq!(FalVideoModel::Wan21I2V.as_str(), "fal-ai/wan-i2v");
         assert_eq!(
-            FalVideoModel::MiniMax.as_str(),
-            "fal-ai/minimax/video-01/image-to-video"
+            FalVideoModel::Hailuo23Std.as_str(),
+            "fal-ai/minimax/hailuo-2.3/standard/text-to-video"
         );
         assert_eq!(
             FalVideoModel::LtxVideo.as_str(),
@@ -477,6 +586,14 @@ mod tests {
             image_url: Some("https://example.com/cat.jpg".to_string()),
             duration: Some(5),
             aspect_ratio: Some("16:9".to_string()),
+            negative_prompt: None,
+            start_image_url: None,
+            end_image_url: None,
+            resolution: None,
+            camera_fixed: None,
+            seed: None,
+            generate_audio: None,
+            prompt_optimizer: None,
         };
         let json = serde_json::to_value(&req).unwrap();
 
@@ -493,6 +610,14 @@ mod tests {
             image_url: None,
             duration: None,
             aspect_ratio: None,
+            negative_prompt: None,
+            start_image_url: None,
+            end_image_url: None,
+            resolution: None,
+            camera_fixed: None,
+            seed: None,
+            generate_audio: None,
+            prompt_optimizer: None,
         };
         let json = serde_json::to_value(&req).unwrap();
 
@@ -500,6 +625,14 @@ mod tests {
         assert!(json.get("image_url").is_none());
         assert!(json.get("duration").is_none());
         assert!(json.get("aspect_ratio").is_none());
+        assert!(json.get("negative_prompt").is_none());
+        assert!(json.get("start_image_url").is_none());
+        assert!(json.get("end_image_url").is_none());
+        assert!(json.get("resolution").is_none());
+        assert!(json.get("camera_fixed").is_none());
+        assert!(json.get("seed").is_none());
+        assert!(json.get("generate_audio").is_none());
+        assert!(json.get("prompt_optimizer").is_none());
     }
 
     #[test]
@@ -635,5 +768,268 @@ mod tests {
             FalVideoModel::Wan21
         };
         assert_eq!(effective, FalVideoModel::Wan21);
+    }
+
+    #[test]
+    fn test_fal_video_model_wan21_flf2v_as_str() {
+        assert_eq!(FalVideoModel::Wan21FLF2V.as_str(), "fal-ai/wan-flf2v");
+    }
+
+    #[test]
+    fn test_fal_video_model_kling_as_str() {
+        assert_eq!(
+            FalVideoModel::KlingStd.as_str(),
+            "fal-ai/kling-video/v1.6/standard/text-to-video"
+        );
+        assert_eq!(
+            FalVideoModel::KlingPro.as_str(),
+            "fal-ai/kling-video/v1.6/pro/text-to-video"
+        );
+    }
+
+    #[test]
+    fn test_request_serialization_with_negative_prompt() {
+        let req = FalVideoRequest {
+            prompt: "A sunset".to_string(),
+            image_url: None,
+            duration: None,
+            aspect_ratio: None,
+            negative_prompt: Some("people, buildings".to_string()),
+            start_image_url: None,
+            end_image_url: None,
+            resolution: None,
+            camera_fixed: None,
+            seed: None,
+            generate_audio: None,
+            prompt_optimizer: None,
+        };
+        let json = serde_json::to_value(&req).unwrap();
+
+        assert_eq!(json["negative_prompt"], "people, buildings");
+    }
+
+    #[test]
+    fn test_request_serialization_with_frame_urls() {
+        let req = FalVideoRequest {
+            prompt: "Interpolate".to_string(),
+            image_url: None,
+            duration: None,
+            aspect_ratio: None,
+            negative_prompt: None,
+            start_image_url: Some("https://example.com/first.jpg".to_string()),
+            end_image_url: Some("https://example.com/last.jpg".to_string()),
+            resolution: None,
+            camera_fixed: None,
+            seed: None,
+            generate_audio: None,
+            prompt_optimizer: None,
+        };
+        let json = serde_json::to_value(&req).unwrap();
+
+        assert_eq!(json["start_image_url"], "https://example.com/first.jpg");
+        assert_eq!(json["end_image_url"], "https://example.com/last.jpg");
+    }
+
+    #[test]
+    fn test_auto_model_selection_flf2v() {
+        // When source image + last frame URL provided and model is Wan21,
+        // it should auto-switch to Wan21FLF2V.
+        let request = VideoGenerationRequest::new("Interpolate")
+            .with_source_image("https://example.com/first.jpg")
+            .with_last_frame_url("https://example.com/last.jpg");
+
+        let effective = if request.source_image_url.is_some() {
+            match &FalVideoModel::Wan21 {
+                FalVideoModel::Wan21 => {
+                    if request.last_frame_url.is_some() {
+                        FalVideoModel::Wan21FLF2V
+                    } else {
+                        FalVideoModel::Wan21I2V
+                    }
+                }
+                other => other.clone(),
+            }
+        } else {
+            FalVideoModel::Wan21
+        };
+        assert_eq!(effective, FalVideoModel::Wan21FLF2V);
+    }
+
+    #[test]
+    fn test_auto_model_selection_kling_i2v() {
+        // When Kling model has source image, i2v_variant should return I2V model ID.
+        let i2v = FalVideoModel::KlingStd.i2v_variant();
+        assert!(i2v.is_some());
+        assert_eq!(
+            i2v.unwrap().as_str(),
+            "fal-ai/kling-video/v1.6/standard/image-to-video"
+        );
+
+        let i2v_pro = FalVideoModel::KlingPro.i2v_variant();
+        assert!(i2v_pro.is_some());
+        assert_eq!(
+            i2v_pro.unwrap().as_str(),
+            "fal-ai/kling-video/v1.6/pro/image-to-video"
+        );
+
+        // Models without i2v variant should return None
+        assert!(FalVideoModel::Wan21.i2v_variant().is_none());
+        assert!(FalVideoModel::LtxVideo.i2v_variant().is_none());
+    }
+
+    #[test]
+    fn test_hailuo_model_as_str() {
+        assert_eq!(
+            FalVideoModel::Hailuo23Std.as_str(),
+            "fal-ai/minimax/hailuo-2.3/standard/text-to-video"
+        );
+        assert_eq!(
+            FalVideoModel::Hailuo23Pro.as_str(),
+            "fal-ai/minimax/hailuo-2.3/pro/text-to-video"
+        );
+        assert_eq!(
+            FalVideoModel::Hailuo23Fast.as_str(),
+            "fal-ai/minimax/hailuo-2.3-fast/standard/image-to-video"
+        );
+    }
+
+    #[test]
+    fn test_seedance_model_as_str() {
+        assert_eq!(
+            FalVideoModel::SeedancePro.as_str(),
+            "fal-ai/bytedance/seedance/v1/pro/text-to-video"
+        );
+        assert_eq!(
+            FalVideoModel::SeedanceLite.as_str(),
+            "fal-ai/bytedance/seedance/v1/lite/text-to-video"
+        );
+        assert_eq!(
+            FalVideoModel::Seedance15Pro.as_str(),
+            "fal-ai/bytedance/seedance/v1.5/pro/text-to-video"
+        );
+    }
+
+    #[test]
+    fn test_hailuo_i2v_variants() {
+        let i2v_std = FalVideoModel::Hailuo23Std.i2v_variant();
+        assert!(i2v_std.is_some());
+        assert_eq!(
+            i2v_std.unwrap().as_str(),
+            "fal-ai/minimax/hailuo-2.3/standard/image-to-video"
+        );
+
+        let i2v_pro = FalVideoModel::Hailuo23Pro.i2v_variant();
+        assert!(i2v_pro.is_some());
+        assert_eq!(
+            i2v_pro.unwrap().as_str(),
+            "fal-ai/minimax/hailuo-2.3/pro/image-to-video"
+        );
+
+        // Hailuo23Fast is already i2v, so no variant
+        assert!(FalVideoModel::Hailuo23Fast.i2v_variant().is_none());
+    }
+
+    #[test]
+    fn test_seedance_i2v_variants() {
+        let i2v_pro = FalVideoModel::SeedancePro.i2v_variant();
+        assert!(i2v_pro.is_some());
+        assert_eq!(
+            i2v_pro.unwrap().as_str(),
+            "fal-ai/bytedance/seedance/v1/pro/image-to-video"
+        );
+
+        let i2v_lite = FalVideoModel::SeedanceLite.i2v_variant();
+        assert!(i2v_lite.is_some());
+        assert_eq!(
+            i2v_lite.unwrap().as_str(),
+            "fal-ai/bytedance/seedance/v1/lite/image-to-video"
+        );
+
+        let i2v_15 = FalVideoModel::Seedance15Pro.i2v_variant();
+        assert!(i2v_15.is_some());
+        assert_eq!(
+            i2v_15.unwrap().as_str(),
+            "fal-ai/bytedance/seedance/v1.5/pro/image-to-video"
+        );
+    }
+
+    #[test]
+    fn test_request_serialization_with_new_fields() {
+        let req = FalVideoRequest {
+            prompt: "Dancing robot".to_string(),
+            image_url: None,
+            duration: Some(5),
+            aspect_ratio: None,
+            negative_prompt: None,
+            start_image_url: None,
+            end_image_url: None,
+            resolution: Some("720p".to_string()),
+            camera_fixed: Some(true),
+            seed: Some(42),
+            generate_audio: Some(true),
+            prompt_optimizer: Some(false),
+        };
+        let json = serde_json::to_value(&req).unwrap();
+
+        assert_eq!(json["resolution"], "720p");
+        assert_eq!(json["camera_fixed"], true);
+        assert_eq!(json["seed"], 42);
+        assert_eq!(json["generate_audio"], true);
+        assert_eq!(json["prompt_optimizer"], false);
+    }
+
+    #[test]
+    fn test_auto_model_selection_hailuo_i2v() {
+        // Hailuo23Std with source image should switch to i2v via i2v_variant().
+        let request = VideoGenerationRequest::new("Animate this")
+            .with_source_image("https://example.com/photo.jpg");
+
+        let mut effective = FalVideoModel::Hailuo23Std;
+        if request.source_image_url.is_some() {
+            if let Some(i2v) = effective.i2v_variant() {
+                effective = i2v;
+            }
+        }
+        assert_eq!(
+            effective.as_str(),
+            "fal-ai/minimax/hailuo-2.3/standard/image-to-video"
+        );
+
+        // Hailuo23Fast is already i2v, should stay the same.
+        let mut effective = FalVideoModel::Hailuo23Fast;
+        if request.source_image_url.is_some() {
+            if let Some(i2v) = effective.i2v_variant() {
+                effective = i2v;
+            }
+        }
+        assert_eq!(effective, FalVideoModel::Hailuo23Fast);
+    }
+
+    #[test]
+    fn test_auto_model_selection_seedance_i2v() {
+        let request = VideoGenerationRequest::new("Animate this")
+            .with_source_image("https://example.com/photo.jpg");
+
+        let mut effective = FalVideoModel::SeedancePro;
+        if request.source_image_url.is_some() {
+            if let Some(i2v) = effective.i2v_variant() {
+                effective = i2v;
+            }
+        }
+        assert_eq!(
+            effective.as_str(),
+            "fal-ai/bytedance/seedance/v1/pro/image-to-video"
+        );
+
+        let mut effective = FalVideoModel::Seedance15Pro;
+        if request.source_image_url.is_some() {
+            if let Some(i2v) = effective.i2v_variant() {
+                effective = i2v;
+            }
+        }
+        assert_eq!(
+            effective.as_str(),
+            "fal-ai/bytedance/seedance/v1.5/pro/image-to-video"
+        );
     }
 }

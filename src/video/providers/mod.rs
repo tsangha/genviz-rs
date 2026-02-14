@@ -14,7 +14,7 @@ pub use grok::{GrokVideoModel, GrokVideoProvider, GrokVideoProviderBuilder};
 pub use openai::{SoraModel, SoraProvider, SoraProviderBuilder};
 
 #[cfg(feature = "veo")]
-pub use veo::{VeoModel, VeoProvider, VeoProviderBuilder};
+pub use veo::{VeoBackend, VeoModel, VeoProvider, VeoProviderBuilder};
 
 #[cfg(feature = "kling-video")]
 mod kling;
@@ -25,3 +25,8 @@ pub use kling::{KlingVideoModel, KlingVideoProvider, KlingVideoProviderBuilder};
 mod fal;
 #[cfg(feature = "fal-video")]
 pub use fal::{FalVideoModel, FalVideoProvider, FalVideoProviderBuilder};
+
+#[cfg(feature = "minimax-video")]
+mod minimax;
+#[cfg(feature = "minimax-video")]
+pub use minimax::{MiniMaxVideoModel, MiniMaxVideoProvider, MiniMaxVideoProviderBuilder};
