@@ -18,13 +18,14 @@ exclude = [".github/", ".claude/", ".env", ".env.*", "CLAUDE.md"]
 default = ["image", "video"]
 
 # Image generation providers
-image = ["flux-image", "gemini-image", "grok-image", "openai-image", "kling-image", "fal-image"]
+image = ["flux-image", "gemini-image", "grok-image", "openai-image", "kling-image", "fal-image", "modelslab-image"]
 flux-image = ["dep:base64"]
 gemini-image = ["dep:base64"]
 grok-image = ["dep:base64"]
 openai-image = ["dep:base64"]
 kling-image = ["dep:base64", "dep:jsonwebtoken"]
 fal-image = ["dep:base64"]
+modelslab-image = ["dep:base64"]
 
 # Video generation providers
 video = ["grok-video", "veo", "openai-video", "kling-video", "fal-video", "minimax-video"]

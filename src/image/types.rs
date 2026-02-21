@@ -92,6 +92,8 @@ pub enum ImageProviderKind {
     Kling,
     /// fal.ai image models.
     Fal,
+    /// ModelsLab image models (Flux, SDXL, community models).
+    ModelsLab,
 }
 
 impl std::fmt::Display for ImageProviderKind {
@@ -103,6 +105,7 @@ impl std::fmt::Display for ImageProviderKind {
             Self::OpenAI => write!(f, "openai"),
             Self::Kling => write!(f, "kling"),
             Self::Fal => write!(f, "fal"),
+            Self::ModelsLab => write!(f, "modelslab"),
         }
     }
 }
