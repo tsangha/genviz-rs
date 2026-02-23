@@ -53,7 +53,13 @@ fn decode_base64_lenient(input: &str) -> Result<Vec<u8>, base64::DecodeError> {
 /// so missing keys fail fast with a clear error.
 fn api_key_env_var(provider: &str) -> Option<&'static str> {
     match provider {
-        "gemini" => Some("GOOGLE_API_KEY"),
+        "gemini" => {
+            if std::env::var("VERTEX_AI_PROJECT").is_ok() {
+                None // Vertex AI uses gcloud auth, no API key needed
+            } else {
+                Some("GOOGLE_API_KEY")
+            }
+        }
         "veo" => {
             if std::env::var("VERTEX_AI_PROJECT").is_ok() {
                 None // Vertex AI uses gcloud auth, no API key needed
@@ -366,7 +372,7 @@ impl McpServer {
     }
 
     fn handle_tools_list(&self, id: Value) -> JsonRpcResponse {
-        let tools = vec![
+        let mut tools = vec![
             Tool {
                 name: "list_providers",
                 description: "List available image and video providers with their models, capabilities, and API key status",
@@ -574,6 +580,53 @@ impl McpServer {
             },
         ];
 
+        // Batch tools (Vertex AI only)
+        tools.push(Tool {
+            name: "batch_generate_images",
+            description:
+                "Submit a batch image generation job to Vertex AI. Requires VERTEX_AI_PROJECT env var. Returns a job name for status checking via get_batch_job.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "prompts": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Array of text prompts to generate images for"
+                    },
+                    "gcs_bucket": {
+                        "type": "string",
+                        "description": "GCS bucket URI for input/output (e.g., 'gs://my-bucket' or 'my-bucket')"
+                    },
+                    "model": {
+                        "type": "string",
+                        "enum": ["nano-banana", "nano-banana-pro"],
+                        "description": "Model variant (default: nano-banana-pro)"
+                    }
+                },
+                "required": ["prompts", "gcs_bucket"]
+            }),
+        });
+
+        tools.push(Tool {
+            name: "get_batch_job",
+            description:
+                "Check status of a batch image generation job. When complete, optionally downloads and saves results.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "job_name": {
+                        "type": "string",
+                        "description": "Full resource name of the batch job (returned by batch_generate_images)"
+                    },
+                    "output_dir": {
+                        "type": "string",
+                        "description": "Directory to save images when job is complete (optional)"
+                    }
+                },
+                "required": ["job_name"]
+            }),
+        });
+
         JsonRpcResponse::success(id, json!({ "tools": tools }))
     }
 
@@ -585,6 +638,8 @@ impl McpServer {
             "list_providers" => self.list_providers(id),
             "generate_image" => self.generate_image(id, arguments).await,
             "generate_video" => self.generate_video(id, arguments).await,
+            "batch_generate_images" => self.batch_generate_images(id, arguments).await,
+            "get_batch_job" => self.get_batch_job(id, arguments).await,
             _ => JsonRpcResponse::error(id, -32602, format!("Unknown tool: {}", tool_name)),
         }
     }
@@ -596,15 +651,17 @@ impl McpServer {
             "image_providers": [
                 {
                     "name": "gemini",
-                    "api_key_env": "GOOGLE_API_KEY",
-                    "api_key_set": check_key("GOOGLE_API_KEY"),
+                    "api_key_env": if std::env::var("VERTEX_AI_PROJECT").is_ok() { "VERTEX_AI_PROJECT" } else { "GOOGLE_API_KEY" },
+                    "api_key_set": if std::env::var("VERTEX_AI_PROJECT").is_ok() { true } else { check_key("GOOGLE_API_KEY") },
+                    "backend": if std::env::var("VERTEX_AI_PROJECT").is_ok() { "vertex" } else { "gemini" },
                     "default_model": "nano-banana-pro",
                     "models": ["nano-banana", "nano-banana-pro"],
                     "capabilities": {
                         "editing": true,
                         "aspect_ratio": false,
                         "width_height": false,
-                        "seed": true
+                        "seed": true,
+                        "batch": std::env::var("VERTEX_AI_PROJECT").is_ok()
                     }
                 },
                 {
@@ -1024,6 +1081,166 @@ impl McpServer {
             Err(e) => JsonRpcResponse::error(id, -32603, format!("Video generation failed: {}", e)),
         }
     }
+
+    async fn batch_generate_images(&self, id: Value, arguments: Value) -> JsonRpcResponse {
+        let params: BatchGenerateParams = match serde_json::from_value(arguments) {
+            Ok(p) => p,
+            Err(e) => {
+                return JsonRpcResponse::error(id, -32602, format!("Invalid parameters: {}", e));
+            }
+        };
+
+        // Batch is Vertex AI only
+        let project = match std::env::var("VERTEX_AI_PROJECT") {
+            Ok(p) => p,
+            Err(_) => {
+                return JsonRpcResponse::error(
+                    id,
+                    -32602,
+                    "batch_generate_images requires VERTEX_AI_PROJECT environment variable (Vertex AI only)",
+                );
+            }
+        };
+        let location =
+            std::env::var("VERTEX_AI_LOCATION").unwrap_or_else(|_| "us-central1".to_string());
+
+        if params.prompts.is_empty() {
+            return JsonRpcResponse::error(id, -32602, "prompts array must not be empty");
+        }
+
+        let model = resolve_batch_model(params.model.as_deref());
+
+        match batch_generate_images_impl(
+            &project,
+            &location,
+            &params.prompts,
+            &params.gcs_bucket,
+            model,
+        )
+        .await
+        {
+            Ok(result) => {
+                let content = json!([{
+                    "type": "text",
+                    "text": serde_json::to_string_pretty(&result).unwrap_or_default()
+                }]);
+                JsonRpcResponse::success(id, json!({ "content": content }))
+            }
+            Err(e) => JsonRpcResponse::error(id, -32603, format!("Batch submission failed: {}", e)),
+        }
+    }
+
+    async fn get_batch_job(&self, id: Value, arguments: Value) -> JsonRpcResponse {
+        let params: GetBatchJobParams = match serde_json::from_value(arguments) {
+            Ok(p) => p,
+            Err(e) => {
+                return JsonRpcResponse::error(id, -32602, format!("Invalid parameters: {}", e));
+            }
+        };
+
+        match get_batch_job_impl(&params.job_name, params.output_dir.as_deref()).await {
+            Ok(result) => {
+                let content = json!([{
+                    "type": "text",
+                    "text": serde_json::to_string_pretty(&result).unwrap_or_default()
+                }]);
+                JsonRpcResponse::success(id, json!({ "content": content }))
+            }
+            Err(e) => JsonRpcResponse::error(id, -32603, format!("Failed to get batch job: {}", e)),
+        }
+    }
+}
+
+/// Batch generate images parameters.
+#[derive(Debug, Deserialize)]
+struct BatchGenerateParams {
+    prompts: Vec<String>,
+    gcs_bucket: String,
+    #[serde(default)]
+    model: Option<String>,
+}
+
+/// Get batch job parameters.
+#[derive(Debug, Deserialize)]
+struct GetBatchJobParams {
+    job_name: String,
+    #[serde(default)]
+    output_dir: Option<String>,
+}
+
+#[cfg(feature = "gemini-image")]
+fn resolve_batch_model(model: Option<&str>) -> crate::GeminiModel {
+    match model {
+        Some("nano-banana") => crate::GeminiModel::NanoBanana,
+        _ => crate::GeminiModel::NanoBananaPro, // default
+    }
+}
+
+#[cfg(not(feature = "gemini-image"))]
+fn resolve_batch_model(_model: Option<&str>) -> () {}
+
+#[cfg(feature = "gemini-image")]
+async fn batch_generate_images_impl(
+    project: &str,
+    location: &str,
+    prompts: &[String],
+    gcs_bucket: &str,
+    model: crate::GeminiModel,
+) -> Result<serde_json::Value, String> {
+    use crate::image::providers::gemini;
+
+    let result = gemini::submit_batch(project, location, prompts, gcs_bucket, model)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(serde_json::to_value(result).unwrap_or_default())
+}
+
+#[cfg(not(feature = "gemini-image"))]
+async fn batch_generate_images_impl(
+    _project: &str,
+    _location: &str,
+    _prompts: &[String],
+    _gcs_bucket: &str,
+    _model: (),
+) -> Result<serde_json::Value, String> {
+    Err("Gemini image provider not enabled".to_string())
+}
+
+#[cfg(feature = "gemini-image")]
+async fn get_batch_job_impl(
+    job_name: &str,
+    output_dir: Option<&str>,
+) -> Result<serde_json::Value, String> {
+    use crate::image::providers::gemini;
+
+    let status = gemini::get_batch_status(job_name)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut result = serde_json::to_value(&status).unwrap_or_default();
+
+    // If job is complete and output_dir is provided, download results
+    if status.state == "JOB_STATE_SUCCEEDED" {
+        if let (Some(output_dir), Some(output_uri)) = (output_dir, &status.output_uri_prefix) {
+            let images = gemini::download_batch_results(output_uri, output_dir)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            result["images"] = serde_json::to_value(&images).unwrap_or_default();
+            result["downloaded"] = serde_json::json!(true);
+        }
+    }
+
+    Ok(result)
+}
+
+#[cfg(not(feature = "gemini-image"))]
+async fn get_batch_job_impl(
+    _job_name: &str,
+    _output_dir: Option<&str>,
+) -> Result<serde_json::Value, String> {
+    Err("Gemini image provider not enabled".to_string())
 }
 
 /// Result of a single image generation.
@@ -1144,6 +1361,14 @@ async fn generate_with_gemini(
             _ => return Err(format!("Unknown Gemini model: {}", m)),
         };
         builder = builder.model(gemini_model);
+    }
+
+    // Auto-detect Vertex AI backend from env
+    if let Ok(project) = std::env::var("VERTEX_AI_PROJECT") {
+        builder = builder.project(project);
+        if let Ok(location) = std::env::var("VERTEX_AI_LOCATION") {
+            builder = builder.location(location);
+        }
     }
 
     let provider = builder.build().map_err(|e| e.to_string())?;
@@ -1826,12 +2051,14 @@ mod tests {
 
         let result = resp.result.unwrap();
         let tools = result["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 3);
+        assert_eq!(tools.len(), 5);
 
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         assert!(names.contains(&"list_providers"));
         assert!(names.contains(&"generate_image"));
         assert!(names.contains(&"generate_video"));
+        assert!(names.contains(&"batch_generate_images"));
+        assert!(names.contains(&"get_batch_job"));
     }
 
     #[tokio::test]

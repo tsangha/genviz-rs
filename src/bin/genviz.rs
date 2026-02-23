@@ -28,11 +28,72 @@ enum Commands {
     /// Generate a video from a text prompt
     Video(Box<VideoArgs>),
 
+    /// Batch image generation via Vertex AI
+    Batch {
+        #[command(subcommand)]
+        action: BatchCommands,
+    },
+
     /// List available providers
     Providers,
 
     /// Run as MCP server (for AI agent integration)
     Mcp,
+}
+
+#[derive(Subcommand)]
+enum BatchCommands {
+    /// Submit a batch of prompts for image generation
+    Submit(BatchSubmitArgs),
+
+    /// Check the status of a batch job
+    Status(BatchStatusArgs),
+
+    /// Download results from a completed batch job
+    Download(BatchDownloadArgs),
+}
+
+#[derive(Args)]
+struct BatchSubmitArgs {
+    /// Prompts to generate (provide multiple, or use --prompts-file)
+    #[arg(required_unless_present = "prompts_file")]
+    prompts: Vec<String>,
+
+    /// File with one prompt per line
+    #[arg(long)]
+    prompts_file: Option<PathBuf>,
+
+    /// GCS bucket for input/output (e.g., "my-bucket" or "gs://my-bucket")
+    #[arg(long)]
+    gcs_bucket: String,
+
+    /// Model variant (nano-banana, nano-banana-pro)
+    #[arg(long, default_value = "nano-banana-pro")]
+    model: String,
+
+    /// GCP project ID (defaults to VERTEX_AI_PROJECT env var)
+    #[arg(long, env = "VERTEX_AI_PROJECT")]
+    project: Option<String>,
+
+    /// GCP location (defaults to VERTEX_AI_LOCATION or us-central1)
+    #[arg(long, env = "VERTEX_AI_LOCATION")]
+    location: Option<String>,
+}
+
+#[derive(Args)]
+struct BatchStatusArgs {
+    /// Full batch job resource name (from submit output)
+    job_name: String,
+}
+
+#[derive(Args)]
+struct BatchDownloadArgs {
+    /// Full batch job resource name (from submit output)
+    job_name: String,
+
+    /// Directory to save downloaded images
+    #[arg(short, long, default_value = "./batch_output")]
+    output_dir: String,
 }
 
 #[derive(Args)]
@@ -247,6 +308,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Video(args) => {
             generate_video(*args, cli.json).await?;
+        }
+        Commands::Batch { action } => {
+            run_batch(action, cli.json).await?;
         }
         Commands::Providers => {
             list_providers(cli.json)?;
@@ -805,6 +869,157 @@ async fn generate_video(args: VideoArgs, json_output: bool) -> anyhow::Result<()
         );
         if let Some(duration) = video.metadata.duration_ms {
             println!("Generation time: {}ms", duration);
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_batch(action: BatchCommands, json_output: bool) -> anyhow::Result<()> {
+    use genviz::{download_batch_results, get_batch_status, submit_batch};
+
+    match action {
+        BatchCommands::Submit(args) => {
+            let project = args.project.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Batch requires Vertex AI. Set --project or VERTEX_AI_PROJECT env var."
+                )
+            })?;
+            let location = args.location.unwrap_or_else(|| "us-central1".to_string());
+
+            // Collect prompts from args or file
+            let mut prompts = args.prompts;
+            if let Some(ref path) = args.prompts_file {
+                let content = std::fs::read_to_string(path)?;
+                prompts.extend(
+                    content
+                        .lines()
+                        .map(str::trim)
+                        .filter(|l| !l.is_empty())
+                        .map(String::from),
+                );
+            }
+
+            if prompts.is_empty() {
+                anyhow::bail!("No prompts provided. Pass them as arguments or use --prompts-file.");
+            }
+
+            let model = match args.model.as_str() {
+                "nano-banana" => genviz::GeminiModel::NanoBanana,
+                "nano-banana-pro" => genviz::GeminiModel::NanoBananaPro,
+                _ => anyhow::bail!(
+                    "Unknown model: {}. Options: nano-banana, nano-banana-pro",
+                    args.model
+                ),
+            };
+
+            if !json_output {
+                eprint!(
+                    "Submitting batch of {} prompts to Vertex AI ({}/{})... ",
+                    prompts.len(),
+                    project,
+                    location
+                );
+            }
+
+            let result =
+                submit_batch(&project, &location, &prompts, &args.gcs_bucket, model).await?;
+
+            if !json_output {
+                eprintln!("done.");
+            }
+
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("Batch job submitted:");
+                println!("  Job name:   {}", result.job_name);
+                println!("  Display:    {}", result.display_name);
+                println!("  State:      {}", result.state);
+                println!("  Prompts:    {}", result.num_prompts);
+                println!("  Input URI:  {}", result.input_uri);
+                println!();
+                println!("Check status with:");
+                println!("  genviz batch status \"{}\"", result.job_name);
+            }
+        }
+        BatchCommands::Status(args) => {
+            if !json_output {
+                eprint!("Checking batch job status... ");
+            }
+
+            let status = get_batch_status(&args.job_name).await?;
+
+            if !json_output {
+                eprintln!("done.");
+            }
+
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                println!("Batch job status:");
+                println!("  Job name:   {}", status.job_name);
+                println!("  Display:    {}", status.display_name);
+                println!("  State:      {}", status.state);
+                if let Some(ref ct) = status.create_time {
+                    println!("  Created:    {}", ct);
+                }
+                if let Some(ref ut) = status.update_time {
+                    println!("  Updated:    {}", ut);
+                }
+
+                if status.state == "JOB_STATE_SUCCEEDED" {
+                    if let Some(ref prefix) = status.output_uri_prefix {
+                        println!("  Output:     {}", prefix);
+                        println!();
+                        println!("Download results with:");
+                        println!("  genviz batch download \"{}\"", status.job_name);
+                    }
+                }
+            }
+        }
+        BatchCommands::Download(args) => {
+            // First get the job to find the output URI
+            if !json_output {
+                eprint!("Fetching job info... ");
+            }
+
+            let status = get_batch_status(&args.job_name).await?;
+
+            if status.state != "JOB_STATE_SUCCEEDED" {
+                anyhow::bail!(
+                    "Job is not complete (state: {}). Wait for JOB_STATE_SUCCEEDED.",
+                    status.state
+                );
+            }
+
+            let output_prefix = status
+                .output_uri_prefix
+                .ok_or_else(|| anyhow::anyhow!("Job succeeded but no output URI found"))?;
+
+            if !json_output {
+                eprint!("downloading results to {}... ", args.output_dir);
+            }
+
+            let results: Vec<genviz::BatchImageResult> =
+                download_batch_results(&output_prefix, &args.output_dir).await?;
+
+            if !json_output {
+                eprintln!("done.");
+            }
+
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&results)?);
+            } else {
+                println!(
+                    "Downloaded {} images to {}/",
+                    results.len(),
+                    args.output_dir
+                );
+                for r in &results {
+                    println!("  {} ({} bytes, {})", r.path, r.size_bytes, r.format);
+                }
+            }
         }
     }
 

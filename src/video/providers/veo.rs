@@ -190,23 +190,7 @@ pub struct VeoProvider {
     backend: VeoBackend,
 }
 
-/// Get a bearer token by running `gcloud auth print-access-token`.
-fn gcloud_access_token() -> Result<String> {
-    let output = std::process::Command::new("gcloud")
-        .args(["auth", "print-access-token"])
-        .output()
-        .map_err(|e| {
-            GenVizError::Auth(format!(
-                "Failed to run gcloud CLI: {}. Install it from https://cloud.google.com/sdk/docs/install",
-                e
-            ))
-        })?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(GenVizError::Auth(format!("gcloud auth failed: {}", stderr)));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
+use crate::auth::gcloud_access_token;
 
 impl VeoProvider {
     /// Creates a new `VeoProviderBuilder`.

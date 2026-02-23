@@ -3,7 +3,7 @@
 #[cfg(feature = "flux-image")]
 mod flux;
 #[cfg(feature = "gemini-image")]
-mod gemini;
+pub(crate) mod gemini;
 #[cfg(feature = "grok-image")]
 mod grok;
 #[cfg(feature = "openai-image")]
@@ -13,7 +13,13 @@ mod openai;
 pub use flux::{FluxModel, FluxProvider, FluxProviderBuilder};
 
 #[cfg(feature = "gemini-image")]
-pub use gemini::{GeminiModel, GeminiProvider, GeminiProviderBuilder};
+pub use gemini::{GeminiBackend, GeminiModel, GeminiProvider, GeminiProviderBuilder};
+
+#[cfg(all(feature = "gemini-image", feature = "cli"))]
+pub use gemini::{
+    download_batch_results, get_batch_status, submit_batch, BatchImageResult, BatchJobStatus,
+    BatchSubmitResult,
+};
 
 #[cfg(feature = "grok-image")]
 pub use grok::{GrokModel, GrokProvider, GrokProviderBuilder};

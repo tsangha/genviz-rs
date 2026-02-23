@@ -59,6 +59,9 @@
 
 mod error;
 
+#[cfg(any(feature = "gemini-image", feature = "veo"))]
+pub(crate) mod auth;
+
 #[cfg(any(
     feature = "image",
     feature = "flux-image",
@@ -107,7 +110,7 @@ pub use image::{
 pub use image::providers::{FluxModel, FluxProvider, FluxProviderBuilder};
 
 #[cfg(feature = "gemini-image")]
-pub use image::providers::{GeminiModel, GeminiProvider, GeminiProviderBuilder};
+pub use image::providers::{GeminiBackend, GeminiModel, GeminiProvider, GeminiProviderBuilder};
 
 #[cfg(feature = "grok-image")]
 pub use image::providers::{GrokModel, GrokProvider, GrokProviderBuilder};
@@ -120,6 +123,12 @@ pub use image::providers::{KlingImageModel, KlingImageProvider, KlingImageProvid
 
 #[cfg(feature = "fal-image")]
 pub use image::providers::{FalImageModel, FalImageProvider, FalImageProviderBuilder};
+
+#[cfg(all(feature = "gemini-image", feature = "cli"))]
+pub use image::providers::{
+    download_batch_results, get_batch_status, submit_batch, BatchImageResult, BatchJobStatus,
+    BatchSubmitResult,
+};
 
 // Re-export commonly used video types
 #[cfg(any(
