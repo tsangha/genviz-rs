@@ -180,6 +180,9 @@ struct GenerateImageParams {
     /// Input image for editing (base64 encoded).
     #[serde(default)]
     input_image: Option<String>,
+    /// File path to input image for editing (takes precedence over input_image).
+    #[serde(default)]
+    input_image_path: Option<String>,
 }
 
 /// Generate video tool parameters.
@@ -440,7 +443,11 @@ impl McpServer {
                         },
                         "input_image": {
                             "type": "string",
-                            "description": "Base64-encoded input image for editing. Accepts raw base64 or data URIs (e.g. data:image/png;base64,...). All providers support this."
+                            "description": "Base64-encoded input image for editing. Accepts raw base64 or data URIs (e.g. data:image/png;base64,...). All providers support this. Prefer using input_image_path instead to avoid base64 encoding issues."
+                        },
+                        "input_image_path": {
+                            "type": "string",
+                            "description": "File path to input image for editing (RECOMMENDED over input_image). The server reads the file directly, avoiding base64 size limits. Takes precedence over input_image if both are provided."
                         }
                     },
                     "required": ["prompt"]
@@ -846,8 +853,19 @@ impl McpServer {
             }
         }
 
-        // Decode and add input image for editing
-        if let Some(ref b64_image) = params.input_image {
+        // Resolve input image: path takes precedence over base64
+        if let Some(ref path) = params.input_image_path {
+            match std::fs::read(path) {
+                Ok(data) => request = request.with_input_image(data),
+                Err(e) => {
+                    return JsonRpcResponse::error(
+                        id,
+                        -32602,
+                        format!("Failed to read input_image_path '{}': {}", path, e),
+                    );
+                }
+            }
+        } else if let Some(ref b64_image) = params.input_image {
             match decode_base64_lenient(b64_image) {
                 Ok(data) => request = request.with_input_image(data),
                 Err(e) => {
@@ -1982,6 +2000,7 @@ mod tests {
             count: None,
             concurrency: None,
             input_image: None,
+            input_image_path: None,
         };
         assert!(validate_image_params("gemini", &params).is_err());
     }
@@ -2000,6 +2019,7 @@ mod tests {
             count: None,
             concurrency: None,
             input_image: None,
+            input_image_path: None,
         };
         assert!(validate_image_params("grok", &params).is_err());
     }
@@ -2018,6 +2038,7 @@ mod tests {
             count: None,
             concurrency: None,
             input_image: None,
+            input_image_path: None,
         };
         assert!(validate_image_params("flux", &params).is_ok());
     }
@@ -2036,6 +2057,7 @@ mod tests {
             count: None,
             concurrency: None,
             input_image: None,
+            input_image_path: None,
         };
         assert!(validate_image_params("fal", &params).is_ok());
     }
