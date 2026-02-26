@@ -36,3 +36,8 @@ pub use kling::{KlingImageModel, KlingImageProvider, KlingImageProviderBuilder};
 mod fal;
 #[cfg(feature = "fal-image")]
 pub use fal::{FalImageModel, FalImageProvider, FalImageProviderBuilder};
+
+#[cfg(feature = "modelslab-image")]
+mod modelslab;
+#[cfg(feature = "modelslab-image")]
+pub use modelslab::{ModelsLabImageModel, ModelsLabImageProvider, ModelsLabImageProviderBuilder};

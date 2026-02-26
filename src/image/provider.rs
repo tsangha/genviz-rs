@@ -22,6 +22,7 @@ pub trait ImageProvider: Send + Sync {
             ImageProviderKind::OpenAI => "OpenAI (gpt-image)",
             ImageProviderKind::Kling => "Kling AI (Kuaishou)",
             ImageProviderKind::Fal => "fal.ai",
+            ImageProviderKind::ModelsLab => "ModelsLab",
         }
     }
 
