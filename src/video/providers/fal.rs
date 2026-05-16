@@ -29,10 +29,19 @@ pub enum FalVideoModel {
     SeedanceLite,
     /// ByteDance Seedance V1.5 Pro - text-to-video generation.
     Seedance15Pro,
+    /// ByteDance Seedance 2.0 — multimodal audio+video model (fal.ai API live 2026-04).
+    Seedance20,
+    /// ByteDance Seedance 2.0 Fast — faster Seedance 2.0 variant.
+    Seedance20Fast,
     /// LTX Video 2 - text-to-video generation.
     LtxVideo,
     /// Wan 2.1 - first-last-frame-to-video (requires first_frame + last_frame URLs).
     Wan21FLF2V,
+    /// Alibaba Wan 2.7 — text-to-video with native audio, up to 15s (released 2026-04).
+    Wan27,
+    /// Alibaba HappyHorse-1.0 — 1080p with native audio + multilingual lip-sync
+    /// (released on fal 2026-04-26; #1 on Artificial Analysis Video Arena).
+    HappyHorse,
     /// Kling V1.6 Standard via fal.ai.
     KlingStd,
     /// Kling V1.6 Pro via fal.ai.
@@ -53,8 +62,12 @@ impl FalVideoModel {
             Self::SeedancePro => "fal-ai/bytedance/seedance/v1/pro/text-to-video",
             Self::SeedanceLite => "fal-ai/bytedance/seedance/v1/lite/text-to-video",
             Self::Seedance15Pro => "fal-ai/bytedance/seedance/v1.5/pro/text-to-video",
+            Self::Seedance20 => "bytedance/seedance-2.0/text-to-video",
+            Self::Seedance20Fast => "bytedance/seedance-2.0/fast/text-to-video",
             Self::LtxVideo => "fal-ai/ltx-2/text-to-video",
             Self::Wan21FLF2V => "fal-ai/wan-flf2v",
+            Self::Wan27 => "fal-ai/wan/v2.7/text-to-video",
+            Self::HappyHorse => "alibaba/happy-horse/text-to-video",
             Self::KlingStd => "fal-ai/kling-video/v1.6/standard/text-to-video",
             Self::KlingPro => "fal-ai/kling-video/v1.6/pro/text-to-video",
             Self::Custom(id) => id,
@@ -81,6 +94,16 @@ impl FalVideoModel {
             )),
             Self::Seedance15Pro => Some(Self::Custom(
                 "fal-ai/bytedance/seedance/v1.5/pro/image-to-video".to_string(),
+            )),
+            Self::Seedance20 => Some(Self::Custom(
+                "bytedance/seedance-2.0/image-to-video".to_string(),
+            )),
+            Self::Seedance20Fast => Some(Self::Custom(
+                "bytedance/seedance-2.0/fast/image-to-video".to_string(),
+            )),
+            Self::Wan27 => Some(Self::Custom("fal-ai/wan/v2.7/image-to-video".to_string())),
+            Self::HappyHorse => Some(Self::Custom(
+                "alibaba/happy-horse/image-to-video".to_string(),
             )),
             Self::KlingStd => Some(Self::Custom(
                 "fal-ai/kling-video/v1.6/standard/image-to-video".to_string(),
@@ -907,6 +930,54 @@ mod tests {
             FalVideoModel::Seedance15Pro.as_str(),
             "fal-ai/bytedance/seedance/v1.5/pro/text-to-video"
         );
+        assert_eq!(
+            FalVideoModel::Seedance20.as_str(),
+            "bytedance/seedance-2.0/text-to-video"
+        );
+        assert_eq!(
+            FalVideoModel::Seedance20Fast.as_str(),
+            "bytedance/seedance-2.0/fast/text-to-video"
+        );
+    }
+
+    #[test]
+    fn test_wan_27_as_str() {
+        assert_eq!(
+            FalVideoModel::Wan27.as_str(),
+            "fal-ai/wan/v2.7/text-to-video"
+        );
+    }
+
+    #[test]
+    fn test_seedance_20_i2v_variant() {
+        let i2v = FalVideoModel::Seedance20.i2v_variant().unwrap();
+        assert_eq!(i2v.as_str(), "bytedance/seedance-2.0/image-to-video");
+
+        let i2v_fast = FalVideoModel::Seedance20Fast.i2v_variant().unwrap();
+        assert_eq!(
+            i2v_fast.as_str(),
+            "bytedance/seedance-2.0/fast/image-to-video"
+        );
+    }
+
+    #[test]
+    fn test_wan_27_i2v_variant() {
+        let i2v = FalVideoModel::Wan27.i2v_variant().unwrap();
+        assert_eq!(i2v.as_str(), "fal-ai/wan/v2.7/image-to-video");
+    }
+
+    #[test]
+    fn test_happy_horse_as_str() {
+        assert_eq!(
+            FalVideoModel::HappyHorse.as_str(),
+            "alibaba/happy-horse/text-to-video"
+        );
+    }
+
+    #[test]
+    fn test_happy_horse_i2v_variant() {
+        let i2v = FalVideoModel::HappyHorse.i2v_variant().unwrap();
+        assert_eq!(i2v.as_str(), "alibaba/happy-horse/image-to-video");
     }
 
     #[test]

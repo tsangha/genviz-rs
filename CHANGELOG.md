@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-05-16
+
+### Added
+- OpenAI `gpt-image-2` image model (released 2026-04-21); promoted to default for the OpenAI provider
+- Veo `veo-3.1-lite-generate-preview` video model (released 2026-03-31) — cost-efficient sibling of Veo 3.1
+- fal.ai image: `recraft-v4.1`, `recraft-v4.1-pro` (released 2026-05-14)
+- fal.ai video: `wan-2.7` (released 2026-04), `seedance-2.0`, `seedance-2.0-fast` (released 2026-04), `happy-horse` (HappyHorse-1.0 by Alibaba, released 2026-04-26)
+- Image-to-video auto-routing for the new fal.ai video models (passing a source image transparently switches to the i2v endpoint)
+- MCP `generate_video` now honors the `model` parameter for the Veo provider
+
+### Changed
+- MCP `list_providers` now reports `default_model` and `models` for the Veo video provider
+- CLI/MCP model enums and help text updated to expose the new models
+
 ## [0.2.1] - 2026-02-07
 
 ### Added

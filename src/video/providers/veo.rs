@@ -32,6 +32,9 @@ pub enum VeoModel {
     /// Veo 3.1 Preview - Google's video generation model.
     #[default]
     Veo31Preview,
+    /// Veo 3.1 Lite Preview — cost-efficient sibling of Veo 3.1 (released 2026-03-31).
+    /// Same speed as Veo 3.1 Fast at <50% the cost; designed for high-volume use.
+    Veo31LitePreview,
 }
 
 impl VeoModel {
@@ -39,6 +42,7 @@ impl VeoModel {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Veo31Preview => "veo-3.1-generate-preview",
+            Self::Veo31LitePreview => "veo-3.1-lite-generate-preview",
         }
     }
 
@@ -46,6 +50,7 @@ impl VeoModel {
     pub fn vertex_id(&self) -> &'static str {
         match self {
             Self::Veo31Preview => "veo-3.1-generate-001",
+            Self::Veo31LitePreview => "veo-3.1-lite-generate-001",
         }
     }
 }
@@ -1180,11 +1185,19 @@ mod tests {
     #[test]
     fn test_veo_model_as_str() {
         assert_eq!(VeoModel::Veo31Preview.as_str(), "veo-3.1-generate-preview");
+        assert_eq!(
+            VeoModel::Veo31LitePreview.as_str(),
+            "veo-3.1-lite-generate-preview"
+        );
     }
 
     #[test]
     fn test_veo_model_vertex_id() {
         assert_eq!(VeoModel::Veo31Preview.vertex_id(), "veo-3.1-generate-001");
+        assert_eq!(
+            VeoModel::Veo31LitePreview.vertex_id(),
+            "veo-3.1-lite-generate-001"
+        );
     }
 
     #[test]

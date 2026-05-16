@@ -430,8 +430,8 @@ impl McpServer {
                                 "flux-fill-pro", "flux-expand-pro",
                                 "grok-imagine",
                                 "kling-v1", "kling-v1.5", "kling-v2",
-                                "gpt-image-1", "dall-e-3",
-                                "flux-schnell", "flux-pro-ultra", "recraft-v3", "ideogram-v3", "hidream"
+                                "gpt-image-2", "gpt-image-1", "dall-e-3",
+                                "flux-schnell", "flux-pro-ultra", "recraft-v3", "recraft-v4.1", "recraft-v4.1-pro", "ideogram-v3", "hidream"
                             ],
                             "description": "Model variant. Must match the selected provider. Call list_providers to see which models belong to which provider."
                         },
@@ -572,7 +572,7 @@ impl McpServer {
                         },
                         "model": {
                             "type": "string",
-                            "description": "Model variant. fal: wan-2.1, hailuo-std, hailuo-pro, hailuo-fast, seedance-pro, seedance-lite, seedance-1.5, ltx-video, kling-std, kling-pro. minimax: hailuo-2.3, hailuo-2.3-fast."
+                            "description": "Model variant. veo: veo-3.1-generate-preview, veo-3.1-lite-generate-preview. fal: wan-2.1, wan-2.7, happy-horse, hailuo-std, hailuo-pro, hailuo-fast, seedance-pro, seedance-lite, seedance-1.5, seedance-2.0, seedance-2.0-fast, ltx-video, kling-std, kling-pro. minimax: hailuo-2.3, hailuo-2.3-fast."
                         }
                     },
                     "required": ["prompt", "output_path"]
@@ -700,8 +700,8 @@ impl McpServer {
                     "name": "openai",
                     "api_key_env": "OPENAI_API_KEY",
                     "api_key_set": check_key("OPENAI_API_KEY"),
-                    "default_model": "gpt-image-1",
-                    "models": ["gpt-image-1", "dall-e-3"],
+                    "default_model": "gpt-image-2",
+                    "models": ["gpt-image-2", "gpt-image-1", "dall-e-3"],
                     "capabilities": {
                         "editing": true,
                         "aspect_ratio": true,
@@ -727,7 +727,7 @@ impl McpServer {
                     "api_key_env": "FAL_KEY",
                     "api_key_set": check_key("FAL_KEY"),
                     "default_model": "flux-schnell",
-                    "models": ["flux-schnell", "flux-pro", "flux-pro-ultra", "recraft-v3", "ideogram-v3", "hidream"],
+                    "models": ["flux-schnell", "flux-pro", "flux-pro-ultra", "recraft-v3", "recraft-v4.1", "recraft-v4.1-pro", "ideogram-v3", "hidream"],
                     "capabilities": {
                         "editing": true,
                         "aspect_ratio": true,
@@ -762,6 +762,8 @@ impl McpServer {
                     "api_key_env": if std::env::var("VERTEX_AI_PROJECT").is_ok() { "VERTEX_AI_PROJECT" } else { "GOOGLE_API_KEY" },
                     "api_key_set": if std::env::var("VERTEX_AI_PROJECT").is_ok() { true } else { check_key("GOOGLE_API_KEY") },
                     "backend": if std::env::var("VERTEX_AI_PROJECT").is_ok() { "vertex" } else { "gemini" },
+                    "default_model": "veo-3.1-generate-preview",
+                    "models": ["veo-3.1-generate-preview", "veo-3.1-lite-generate-preview"],
                     "capabilities": {
                         "image_to_video": true,
                         "first_last_frame": true,
@@ -791,8 +793,10 @@ impl McpServer {
                     "name": "fal",
                     "api_key_env": "FAL_KEY",
                     "api_key_set": check_key("FAL_KEY"),
-                    "models": ["wan-2.1", "hailuo-std", "hailuo-pro", "hailuo-fast",
+                    "models": ["wan-2.1", "wan-2.7", "happy-horse",
+                               "hailuo-std", "hailuo-pro", "hailuo-fast",
                                "seedance-pro", "seedance-lite", "seedance-1.5",
+                               "seedance-2.0", "seedance-2.0-fast",
                                "ltx-video", "kling-std", "kling-pro"],
                     "capabilities": {
                         "duration": true,
@@ -1425,6 +1429,7 @@ async fn generate_with_openai(
 
     if let Some(m) = model {
         let openai_model = match m {
+            "gpt-image-2" => OpenAiImageModel::GptImage2,
             "gpt-image-1" => OpenAiImageModel::GptImage1,
             "dall-e-3" => OpenAiImageModel::DallE3,
             _ => return Err(format!("Unknown OpenAI model: {}", m)),
@@ -1492,6 +1497,8 @@ async fn generate_with_fal(
             "flux-pro" => FalImageModel::FluxPro,
             "flux-pro-ultra" => FalImageModel::FluxProUltra,
             "recraft-v3" => FalImageModel::RecraftV3,
+            "recraft-v4.1" | "recraft-v41" => FalImageModel::RecraftV41,
+            "recraft-v4.1-pro" | "recraft-v41-pro" => FalImageModel::RecraftV41Pro,
             "ideogram-v3" => FalImageModel::Ideogram3,
             "hidream" => FalImageModel::HiDream,
             s if s.starts_with("fal-ai/") => FalImageModel::Custom(s.to_string()),
@@ -1592,7 +1599,7 @@ async fn generate_video_with_veo(
     params: &GenerateVideoParams,
 ) -> Result<VideoGenerationResult, String> {
     use crate::video::{VideoGenerationRequest, VideoProvider};
-    use crate::VeoProvider;
+    use crate::{VeoModel, VeoProvider};
     use base64::Engine;
 
     let mut request = VideoGenerationRequest::new(&params.prompt);
@@ -1676,6 +1683,14 @@ async fn generate_video_with_veo(
     }
 
     let mut builder = VeoProvider::builder();
+    if let Some(model_name) = &params.model {
+        let model = match model_name.as_str() {
+            "veo-3.1-generate-preview" | "veo-3.1" => VeoModel::Veo31Preview,
+            "veo-3.1-lite-generate-preview" | "veo-3.1-lite" => VeoModel::Veo31LitePreview,
+            other => return Err(format!("Unknown Veo model: {other}")),
+        };
+        builder = builder.model(model);
+    }
     if let Ok(project) = std::env::var("VERTEX_AI_PROJECT") {
         builder = builder.project(project);
         if let Ok(location) = std::env::var("VERTEX_AI_LOCATION") {
@@ -1846,12 +1861,16 @@ async fn generate_video_with_fal(
         let model = match model_name.as_str() {
             "wan-2.1" | "wan" => FalVideoModel::Wan21,
             "wan-2.1-i2v" => FalVideoModel::Wan21I2V,
+            "wan-2.7" => FalVideoModel::Wan27,
+            "happy-horse" | "happyhorse" | "happyhorse-1.0" => FalVideoModel::HappyHorse,
             "hailuo-std" | "hailuo" => FalVideoModel::Hailuo23Std,
             "hailuo-pro" => FalVideoModel::Hailuo23Pro,
             "hailuo-fast" => FalVideoModel::Hailuo23Fast,
             "seedance-pro" | "seedance" => FalVideoModel::SeedancePro,
             "seedance-lite" => FalVideoModel::SeedanceLite,
             "seedance-1.5" | "seedance-1.5-pro" => FalVideoModel::Seedance15Pro,
+            "seedance-2.0" | "seedance-2" => FalVideoModel::Seedance20,
+            "seedance-2.0-fast" | "seedance-2-fast" => FalVideoModel::Seedance20Fast,
             "ltx-video" | "ltx" => FalVideoModel::LtxVideo,
             "kling-std" => FalVideoModel::KlingStd,
             "kling-pro" => FalVideoModel::KlingPro,
@@ -2117,9 +2136,11 @@ mod tests {
         assert!(models.contains(&"nano-banana-pro")); // gemini
         assert!(models.contains(&"flux-2-max")); // flux
         assert!(models.contains(&"grok-imagine")); // grok
+        assert!(models.contains(&"gpt-image-2")); // openai (post-2026-04-21)
         assert!(models.contains(&"gpt-image-1")); // openai
         assert!(models.contains(&"dall-e-3")); // openai
         assert!(models.contains(&"flux-schnell")); // fal
+        assert!(models.contains(&"recraft-v4.1")); // fal (post-2026-05-14)
     }
 
     #[tokio::test]

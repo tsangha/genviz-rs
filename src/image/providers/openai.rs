@@ -15,8 +15,11 @@ const EDITS_URL: &str = "https://api.openai.com/v1/images/edits";
 /// OpenAI image model variants.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum OpenAiImageModel {
-    /// GPT Image 1 - OpenAI's latest image generation model.
+    /// GPT Image 2 — OpenAI's flagship image model (released 2026-04-21).
+    /// First OpenAI image model with built-in reasoning ("thinking mode").
     #[default]
+    GptImage2,
+    /// GPT Image 1 - OpenAI's previous-generation image model.
     GptImage1,
     /// DALL-E 3 - high quality image generation.
     DallE3,
@@ -26,6 +29,7 @@ impl OpenAiImageModel {
     /// Returns the API model identifier string.
     pub fn as_str(&self) -> &'static str {
         match self {
+            Self::GptImage2 => "gpt-image-2",
             Self::GptImage1 => "gpt-image-1",
             Self::DallE3 => "dall-e-3",
         }
@@ -107,7 +111,7 @@ impl OpenAiImageProvider {
         // Map aspect ratio to closest supported size
         if let Some(ar) = &request.aspect_ratio {
             let size = match model {
-                OpenAiImageModel::GptImage1 => match ar {
+                OpenAiImageModel::GptImage2 | OpenAiImageModel::GptImage1 => match ar {
                     crate::image::AspectRatio::Square => "1024x1024",
                     crate::image::AspectRatio::Landscape => "1536x1024",
                     crate::image::AspectRatio::Portrait => "1024x1536",
@@ -400,8 +404,22 @@ mod tests {
 
     #[test]
     fn test_model_as_str() {
+        assert_eq!(OpenAiImageModel::GptImage2.as_str(), "gpt-image-2");
         assert_eq!(OpenAiImageModel::GptImage1.as_str(), "gpt-image-1");
         assert_eq!(OpenAiImageModel::DallE3.as_str(), "dall-e-3");
+    }
+
+    #[test]
+    fn test_gpt_image_2_is_default() {
+        assert_eq!(OpenAiImageModel::default(), OpenAiImageModel::GptImage2);
+    }
+
+    #[test]
+    fn test_size_mapping_gpt_image_2_aspect_ratio() {
+        let req =
+            GenerationRequest::new("test").with_aspect_ratio(crate::image::AspectRatio::Landscape);
+        let size = OpenAiImageProvider::resolve_size(&req, &OpenAiImageModel::GptImage2);
+        assert_eq!(size.as_deref(), Some("1536x1024"));
     }
 
     #[test]

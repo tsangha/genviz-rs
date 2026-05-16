@@ -129,7 +129,7 @@ struct ImageArgs {
     #[arg(short, long)]
     input: Option<PathBuf>,
 
-    /// Model variant (flux: flux-pro-1.1, flux-pro-1.1-ultra, flux-pro, flux-dev, flux-2-max, flux-2-pro, flux-2-flex, flux-2-klein-4b, flux-2-klein-9b, flux-kontext-pro, flux-kontext-max, flux-fill-pro, flux-expand-pro; gemini: nano-banana, nano-banana-pro; grok: grok-imagine; openai: gpt-image-1, dall-e-3; kling: kling-v1, kling-v1.5, kling-v2; fal: flux-schnell, flux-pro, flux-pro-ultra, recraft-v3, ideogram-v3, hidream)
+    /// Model variant (flux: flux-pro-1.1, flux-pro-1.1-ultra, flux-pro, flux-dev, flux-2-max, flux-2-pro, flux-2-flex, flux-2-klein-4b, flux-2-klein-9b, flux-kontext-pro, flux-kontext-max, flux-fill-pro, flux-expand-pro; gemini: nano-banana, nano-banana-pro; grok: grok-imagine; openai: gpt-image-2, gpt-image-1, dall-e-3; kling: kling-v1, kling-v1.5, kling-v2; fal: flux-schnell, flux-pro, flux-pro-ultra, recraft-v3, recraft-v4.1, recraft-v4.1-pro, ideogram-v3, hidream)
     #[arg(long)]
     model: Option<String>,
 }
@@ -235,7 +235,7 @@ struct VideoArgs {
     #[arg(long)]
     resolution: Option<String>,
 
-    /// Model variant (grok: grok-imagine-video; openai: sora-2; veo: veo-3.1-generate-preview; fal: wan-2.1, wan-2.1-i2v, hailuo-std, hailuo-pro, hailuo-fast, seedance-pro, seedance-lite, seedance-1.5, ltx-video, kling-std, kling-pro; minimax: hailuo-2.3, hailuo-2.3-fast)
+    /// Model variant (grok: grok-imagine-video; openai: sora-2; veo: veo-3.1-generate-preview, veo-3.1-lite-generate-preview; fal: wan-2.1, wan-2.1-i2v, wan-2.7, happy-horse, hailuo-std, hailuo-pro, hailuo-fast, seedance-pro, seedance-lite, seedance-1.5, seedance-2.0, seedance-2.0-fast, ltx-video, kling-std, kling-pro; minimax: hailuo-2.3, hailuo-2.3-fast)
     #[arg(long)]
     model: Option<String>,
 }
@@ -492,10 +492,11 @@ async fn generate_image(args: ImageArgs, json_output: bool) -> anyhow::Result<()
                 let mut builder = genviz::OpenAiImageProvider::builder();
                 if let Some(ref m) = args.model {
                     let model = match m.as_str() {
+                        "gpt-image-2" => genviz::OpenAiImageModel::GptImage2,
                         "gpt-image-1" => genviz::OpenAiImageModel::GptImage1,
                         "dall-e-3" => genviz::OpenAiImageModel::DallE3,
                         _ => anyhow::bail!(
-                            "Unknown OpenAI model: {}. Options: gpt-image-1, dall-e-3",
+                            "Unknown OpenAI model: {}. Options: gpt-image-2, gpt-image-1, dall-e-3",
                             m
                         ),
                     };
@@ -543,13 +544,17 @@ async fn generate_image(args: ImageArgs, json_output: bool) -> anyhow::Result<()
                         "flux-pro" => genviz::FalImageModel::FluxPro,
                         "flux-pro-ultra" => genviz::FalImageModel::FluxProUltra,
                         "recraft-v3" => genviz::FalImageModel::RecraftV3,
+                        "recraft-v4.1" | "recraft-v41" => genviz::FalImageModel::RecraftV41,
+                        "recraft-v4.1-pro" | "recraft-v41-pro" => {
+                            genviz::FalImageModel::RecraftV41Pro
+                        }
                         "ideogram-v3" => genviz::FalImageModel::Ideogram3,
                         "hidream" => genviz::FalImageModel::HiDream,
                         s if s.starts_with("fal-ai/") => {
                             genviz::FalImageModel::Custom(s.to_string())
                         }
                         _ => anyhow::bail!(
-                            "Unknown fal.ai model: {}. Options: flux-schnell, flux-pro, flux-pro-ultra, recraft-v3, ideogram-v3, hidream, or fal-ai/...",
+                            "Unknown fal.ai model: {}. Options: flux-schnell, flux-pro, flux-pro-ultra, recraft-v3, recraft-v4.1, recraft-v4.1-pro, ideogram-v3, hidream, or fal-ai/...",
                             m
                         ),
                     };
@@ -734,9 +739,12 @@ async fn generate_video(args: VideoArgs, json_output: bool) -> anyhow::Result<()
                 let mut builder = genviz::VeoProvider::builder();
                 if let Some(ref m) = args.model {
                     let model = match m.as_str() {
-                        "veo-3.1-generate-preview" => genviz::VeoModel::Veo31Preview,
+                        "veo-3.1-generate-preview" | "veo-3.1" => genviz::VeoModel::Veo31Preview,
+                        "veo-3.1-lite-generate-preview" | "veo-3.1-lite" => {
+                            genviz::VeoModel::Veo31LitePreview
+                        }
                         _ => anyhow::bail!(
-                            "Unknown Veo model: {}. Options: veo-3.1-generate-preview",
+                            "Unknown Veo model: {}. Options: veo-3.1-generate-preview, veo-3.1-lite-generate-preview",
                             m
                         ),
                     };
@@ -787,12 +795,20 @@ async fn generate_video(args: VideoArgs, json_output: bool) -> anyhow::Result<()
                     let model = match m.as_str() {
                         "wan-2.1" | "wan" => genviz::FalVideoModel::Wan21,
                         "wan-2.1-i2v" | "wan-i2v" => genviz::FalVideoModel::Wan21I2V,
+                        "wan-2.7" => genviz::FalVideoModel::Wan27,
+                        "happy-horse" | "happyhorse" | "happyhorse-1.0" => {
+                            genviz::FalVideoModel::HappyHorse
+                        }
                         "hailuo-std" | "hailuo" => genviz::FalVideoModel::Hailuo23Std,
                         "hailuo-pro" => genviz::FalVideoModel::Hailuo23Pro,
                         "hailuo-fast" => genviz::FalVideoModel::Hailuo23Fast,
                         "seedance-pro" | "seedance" => genviz::FalVideoModel::SeedancePro,
                         "seedance-lite" => genviz::FalVideoModel::SeedanceLite,
                         "seedance-1.5" | "seedance-1.5-pro" => genviz::FalVideoModel::Seedance15Pro,
+                        "seedance-2.0" | "seedance-2" => genviz::FalVideoModel::Seedance20,
+                        "seedance-2.0-fast" | "seedance-2-fast" => {
+                            genviz::FalVideoModel::Seedance20Fast
+                        }
                         "minimax" => genviz::FalVideoModel::Hailuo23Std, // backward compat alias
                         "ltx-video" | "ltx" => genviz::FalVideoModel::LtxVideo,
                         "kling-std" | "kling" => genviz::FalVideoModel::KlingStd,
@@ -801,7 +817,7 @@ async fn generate_video(args: VideoArgs, json_output: bool) -> anyhow::Result<()
                             genviz::FalVideoModel::Custom(s.to_string())
                         }
                         _ => anyhow::bail!(
-                            "Unknown fal.ai video model: {}. Options: wan-2.1, wan-2.1-i2v, hailuo-std, hailuo-pro, hailuo-fast, seedance-pro, seedance-lite, seedance-1.5, ltx-video, kling-std, kling-pro, or fal-ai/...",
+                            "Unknown fal.ai video model: {}. Options: wan-2.1, wan-2.1-i2v, wan-2.7, happy-horse, hailuo-std, hailuo-pro, hailuo-fast, seedance-pro, seedance-lite, seedance-1.5, seedance-2.0, seedance-2.0-fast, ltx-video, kling-std, kling-pro, or fal-ai/...",
                             m
                         ),
                     };

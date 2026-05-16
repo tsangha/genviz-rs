@@ -22,6 +22,10 @@ pub enum FalImageModel {
     FluxProUltra,
     /// Recraft V3 - design-focused image model.
     RecraftV3,
+    /// Recraft V4.1 - latest Recraft model (released 2026-05-14), standard tier.
+    RecraftV41,
+    /// Recraft V4.1 Pro - top-tier Recraft V4.1.
+    RecraftV41Pro,
     /// Ideogram V3 - text-in-image capable model.
     Ideogram3,
     /// HiDream I1 Full - high-fidelity dream-like images.
@@ -38,6 +42,8 @@ impl FalImageModel {
             Self::FluxPro => "fal-ai/flux-pro/v1.1",
             Self::FluxProUltra => "fal-ai/flux-pro/v1.1-ultra",
             Self::RecraftV3 => "fal-ai/recraft-v3",
+            Self::RecraftV41 => "fal-ai/recraft/v4.1/text-to-image",
+            Self::RecraftV41Pro => "fal-ai/recraft/v4.1/pro/text-to-image",
             Self::Ideogram3 => "fal-ai/ideogram/v3",
             Self::HiDream => "fal-ai/hidream-i1-full",
             Self::Custom(id) => id,
@@ -490,6 +496,14 @@ mod tests {
             "fal-ai/flux-pro/v1.1-ultra"
         );
         assert_eq!(FalImageModel::RecraftV3.as_str(), "fal-ai/recraft-v3");
+        assert_eq!(
+            FalImageModel::RecraftV41.as_str(),
+            "fal-ai/recraft/v4.1/text-to-image"
+        );
+        assert_eq!(
+            FalImageModel::RecraftV41Pro.as_str(),
+            "fal-ai/recraft/v4.1/pro/text-to-image"
+        );
         assert_eq!(FalImageModel::Ideogram3.as_str(), "fal-ai/ideogram/v3");
         assert_eq!(FalImageModel::HiDream.as_str(), "fal-ai/hidream-i1-full");
     }
