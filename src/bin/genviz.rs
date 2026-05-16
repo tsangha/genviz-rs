@@ -248,6 +248,7 @@ enum ImageProviderArg {
     Openai,
     Kling,
     Fal,
+    Higgsfield,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -258,6 +259,7 @@ enum VideoProviderArg {
     Kling,
     Fal,
     Minimax,
+    Higgsfield,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -367,6 +369,13 @@ fn validate_image_args(args: &ImageArgs) -> anyhow::Result<()> {
         }
         ImageProviderArg::Fal => {
             // fal.ai supports all options
+        }
+        ImageProviderArg::Higgsfield => {
+            if args.width.is_some() || args.height.is_some() {
+                anyhow::bail!(
+                    "Higgsfield does not support --width/--height (use --aspect-ratio instead)"
+                );
+            }
         }
     }
     Ok(())
@@ -566,6 +575,22 @@ async fn generate_image(args: ImageArgs, json_output: bool) -> anyhow::Result<()
             #[cfg(not(feature = "fal-image"))]
             {
                 anyhow::bail!("fal.ai image provider not enabled");
+            }
+        }
+        ImageProviderArg::Higgsfield => {
+            #[cfg(feature = "higgsfield-image")]
+            {
+                let mut builder = genviz::HiggsfieldImageProvider::builder();
+                if let Some(ref m) = args.model {
+                    let model = parse_higgsfield_image_model(m)?;
+                    builder = builder.model(model);
+                }
+                let provider = builder.build()?;
+                provider.generate(&request).await?
+            }
+            #[cfg(not(feature = "higgsfield-image"))]
+            {
+                anyhow::bail!("Higgsfield image provider not enabled");
             }
         }
     };
@@ -856,6 +881,22 @@ async fn generate_video(args: VideoArgs, json_output: bool) -> anyhow::Result<()
                 anyhow::bail!("MiniMax video provider not enabled");
             }
         }
+        VideoProviderArg::Higgsfield => {
+            #[cfg(feature = "higgsfield-video")]
+            {
+                let mut builder = genviz::HiggsfieldVideoProvider::builder();
+                if let Some(ref m) = args.model {
+                    let model = parse_higgsfield_video_model(m)?;
+                    builder = builder.model(model);
+                }
+                let provider = builder.build()?;
+                provider.generate(&request).await?
+            }
+            #[cfg(not(feature = "higgsfield-video"))]
+            {
+                anyhow::bail!("Higgsfield video provider not enabled");
+            }
+        }
     };
 
     if !json_output {
@@ -1097,11 +1138,18 @@ fn list_providers(json_output: bool) -> anyhow::Result<()> {
             enabled: cfg!(feature = "kling-image"),
         },
         ProviderInfo {
-            name: "fal.ai (flux-schnell, flux-pro, flux-pro-ultra, recraft-v3, ideogram-v3, hidream)",
+            name: "fal.ai (flux-schnell, flux-pro, flux-pro-ultra, recraft-v3, recraft-v4.1, ideogram-v3, hidream)",
             kind: "fal",
             media_type: "image",
             env_var: "FAL_KEY",
             enabled: cfg!(feature = "fal-image"),
+        },
+        ProviderInfo {
+            name: "Higgsfield (gpt-image-2, nano-banana-pro, soul-v2, flux-2, seedream-4.5, …) — via `higgsfield` CLI",
+            kind: "higgsfield",
+            media_type: "image",
+            env_var: "(uses `higgsfield auth login`)",
+            enabled: cfg!(feature = "higgsfield-image"),
         },
         // Video providers
         ProviderInfo {
@@ -1146,6 +1194,13 @@ fn list_providers(json_output: bool) -> anyhow::Result<()> {
             env_var: "MINIMAX_API_KEY",
             enabled: cfg!(feature = "minimax-video"),
         },
+        ProviderInfo {
+            name: "Higgsfield video (seedance-2.0, veo3-1, veo3-1-lite, kling3-0, wan2-7, soul-cast, …) — via `higgsfield` CLI",
+            kind: "higgsfield",
+            media_type: "video",
+            env_var: "(uses `higgsfield auth login`)",
+            enabled: cfg!(feature = "higgsfield-video"),
+        },
     ];
 
     if json_output {
@@ -1167,4 +1222,49 @@ fn list_providers(json_output: bool) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(feature = "higgsfield-image")]
+fn parse_higgsfield_image_model(s: &str) -> anyhow::Result<genviz::HiggsfieldImageModel> {
+    use genviz::HiggsfieldImageModel as M;
+    Ok(match s {
+        "gpt-image-2" | "gpt_image_2" => M::GptImage2,
+        "nano-banana-pro" | "nano_banana_2" => M::NanoBananaPro,
+        "nano-banana-2" | "nano-banana-flash" | "nano_banana_flash" => M::NanoBanana2,
+        "flux-2" | "flux_2" => M::Flux2,
+        "flux-kontext" | "flux_kontext" => M::FluxKontext,
+        "soul-v2" | "soul_v2" | "text2image_soul_v2" => M::SoulV2,
+        "soul-cinematic" | "soul_cinematic" => M::SoulCinematic,
+        "soul-location" | "soul_location" => M::SoulLocation,
+        "seedream-4.5" | "seedream_v4_5" => M::Seedream45,
+        "seedream-5-lite" | "seedream_v5_lite" => M::Seedream5Lite,
+        "kling-omni" | "kling_omni_image" => M::KlingOmni,
+        "cinematic-studio-2.5" | "cinematic_studio_2_5" => M::CinematicStudio25,
+        "grok-image" | "grok_image" => M::GrokImage,
+        "z-image" | "z_image" => M::ZImage,
+        other => M::Custom(other.to_string()),
+    })
+}
+
+#[cfg(feature = "higgsfield-video")]
+fn parse_higgsfield_video_model(s: &str) -> anyhow::Result<genviz::HiggsfieldVideoModel> {
+    use genviz::HiggsfieldVideoModel as M;
+    Ok(match s {
+        "seedance-2.0" | "seedance-2" | "seedance_2_0" => M::Seedance20,
+        "seedance-1.5" | "seedance1_5" => M::Seedance15Pro,
+        "veo3-1" | "veo-3.1" | "veo3_1" => M::Veo31,
+        "veo3-1-lite" | "veo-3.1-lite" | "veo3_1_lite" => M::Veo31Lite,
+        "veo3" | "veo-3" => M::Veo3,
+        "kling3-0" | "kling-3.0" | "kling3_0" => M::Kling30,
+        "kling2-6" | "kling-2.6" | "kling2_6" => M::Kling26,
+        "wan2-7" | "wan-2.7" | "wan2_7" => M::Wan27,
+        "wan2-6" | "wan-2.6" | "wan2_6" => M::Wan26,
+        "hailuo" | "minimax-hailuo" | "minimax_hailuo" => M::Hailuo,
+        "grok-video" | "grok_video" => M::GrokVideo,
+        "soul-cast" | "soul_cast" => M::SoulCast,
+        "cinematic-studio-3.0" | "cinematic_studio_3_0" => M::CinematicStudio3,
+        "cinematic-studio-video-v2" | "cinematic_studio_video_v2" => M::CinematicStudioVideoV2,
+        "marketing-studio-video" | "marketing_studio_video" => M::MarketingStudioVideo,
+        other => M::Custom(other.to_string()),
+    })
 }

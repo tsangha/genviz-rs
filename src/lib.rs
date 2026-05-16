@@ -69,7 +69,8 @@ pub(crate) mod auth;
     feature = "grok-image",
     feature = "openai-image",
     feature = "kling-image",
-    feature = "fal-image"
+    feature = "fal-image",
+    feature = "higgsfield-image"
 ))]
 pub mod image;
 
@@ -80,9 +81,13 @@ pub mod image;
     feature = "openai-video",
     feature = "kling-video",
     feature = "fal-video",
-    feature = "minimax-video"
+    feature = "minimax-video",
+    feature = "higgsfield-video"
 ))]
 pub mod video;
+
+#[cfg(any(feature = "higgsfield-image", feature = "higgsfield-video"))]
+pub mod higgsfield;
 
 #[cfg(feature = "cli")]
 #[doc(hidden)]
@@ -99,7 +104,8 @@ pub use error::{GenVizError, Result};
     feature = "grok-image",
     feature = "openai-image",
     feature = "kling-image",
-    feature = "fal-image"
+    feature = "fal-image",
+    feature = "higgsfield-image"
 ))]
 pub use image::{
     AspectRatio, GeneratedImage, GenerationMetadata, GenerationRequest, ImageFormat, ImageProvider,
@@ -138,7 +144,8 @@ pub use image::providers::{
     feature = "openai-video",
     feature = "kling-video",
     feature = "fal-video",
-    feature = "minimax-video"
+    feature = "minimax-video",
+    feature = "higgsfield-video"
 ))]
 pub use video::{
     GeneratedVideo, SubjectReference, VideoGenerationRequest, VideoMetadata, VideoProvider,
@@ -163,6 +170,19 @@ pub use video::providers::{FalVideoModel, FalVideoProvider, FalVideoProviderBuil
 #[cfg(feature = "minimax-video")]
 pub use video::providers::{MiniMaxVideoModel, MiniMaxVideoProvider, MiniMaxVideoProviderBuilder};
 
+#[cfg(feature = "higgsfield-image")]
+pub use higgsfield::{
+    HiggsfieldImageModel, HiggsfieldImageProvider, HiggsfieldImageProviderBuilder,
+};
+
+#[cfg(any(feature = "higgsfield-image", feature = "higgsfield-video"))]
+pub use higgsfield::{HiggsfieldCli, HiggsfieldMode, HiggsfieldSurface};
+
+#[cfg(feature = "higgsfield-video")]
+pub use higgsfield::{
+    HiggsfieldVideoModel, HiggsfieldVideoProvider, HiggsfieldVideoProviderBuilder,
+};
+
 /// Prelude for convenient imports.
 pub mod prelude {
     pub use crate::error::{GenVizError, Result};
@@ -174,7 +194,8 @@ pub mod prelude {
         feature = "grok-image",
         feature = "openai-image",
         feature = "kling-image",
-        feature = "fal-image"
+        feature = "fal-image",
+        feature = "higgsfield-image"
     ))]
     pub use crate::image::{GeneratedImage, GenerationRequest, ImageProvider, ImageProviderExt};
 
@@ -185,7 +206,8 @@ pub mod prelude {
         feature = "openai-video",
         feature = "kling-video",
         feature = "fal-video",
-        feature = "minimax-video"
+        feature = "minimax-video",
+        feature = "higgsfield-video"
     ))]
     pub use crate::video::{
         GeneratedVideo, VideoGenerationRequest, VideoProvider, VideoProviderExt,
@@ -226,4 +248,10 @@ pub mod prelude {
 
     #[cfg(feature = "minimax-video")]
     pub use crate::video::providers::MiniMaxVideoProvider;
+
+    #[cfg(feature = "higgsfield-image")]
+    pub use crate::higgsfield::HiggsfieldImageProvider;
+
+    #[cfg(feature = "higgsfield-video")]
+    pub use crate::higgsfield::HiggsfieldVideoProvider;
 }

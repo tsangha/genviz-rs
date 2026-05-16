@@ -22,6 +22,7 @@ pub trait VideoProvider: Send + Sync {
             VideoProviderKind::Kling => "Kling AI (Kuaishou)",
             VideoProviderKind::Fal => "fal.ai",
             VideoProviderKind::MiniMax => "MiniMax Hailuo (MiniMax)",
+            VideoProviderKind::Higgsfield => "Higgsfield",
         }
     }
 

@@ -20,6 +20,8 @@ pub enum VideoProviderKind {
     Fal,
     /// MiniMax Hailuo video generation (direct API).
     MiniMax,
+    /// Higgsfield video models (CLI-backed: Seedance 2.0, Veo 3.1, Kling 3.0, Wan 2.7, Soul Cast, …).
+    Higgsfield,
 }
 
 impl std::fmt::Display for VideoProviderKind {
@@ -31,6 +33,7 @@ impl std::fmt::Display for VideoProviderKind {
             Self::Kling => write!(f, "kling"),
             Self::Fal => write!(f, "fal"),
             Self::MiniMax => write!(f, "minimax"),
+            Self::Higgsfield => write!(f, "higgsfield"),
         }
     }
 }

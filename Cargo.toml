@@ -1,8 +1,8 @@
 [package]
 name = "genviz"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2021"
-description = "Unified AI media generation (image + video) via Flux, Gemini, Grok, OpenAI, Kling, fal.ai, MiniMax, and Veo APIs"
+description = "Unified AI media generation (image + video) via Flux, Gemini, Grok, OpenAI, Kling, fal.ai, MiniMax, Veo, and Higgsfield APIs"
 license = "MIT"
 authors = ["Taj Sangha"]
 repository = "https://github.com/tsangha/genviz-rs"
@@ -18,29 +18,32 @@ exclude = [".github/", ".claude/", ".env", ".env.*", "CLAUDE.md"]
 default = ["image", "video"]
 
 # Image generation providers
-image = ["flux-image", "gemini-image", "grok-image", "openai-image", "kling-image", "fal-image"]
+image = ["flux-image", "gemini-image", "grok-image", "openai-image", "kling-image", "fal-image", "higgsfield-image"]
 flux-image = ["dep:base64"]
 gemini-image = ["dep:base64"]
 grok-image = ["dep:base64"]
 openai-image = ["dep:base64"]
 kling-image = ["dep:base64", "dep:jsonwebtoken"]
 fal-image = ["dep:base64"]
+higgsfield-image = ["dep:tempfile"]
 
 # Video generation providers
-video = ["grok-video", "veo", "openai-video", "kling-video", "fal-video", "minimax-video"]
+video = ["grok-video", "veo", "openai-video", "kling-video", "fal-video", "minimax-video", "higgsfield-video"]
 grok-video = ["dep:base64"]
 veo = ["dep:base64"]
 openai-video = ["dep:base64"]
 kling-video = ["dep:base64", "dep:jsonwebtoken"]
 fal-video = ["dep:base64"]
 minimax-video = ["dep:base64"]
+higgsfield-video = ["dep:tempfile"]
 
 # CLI binary
 cli = ["dep:clap", "dep:anyhow", "dep:tracing-subscriber", "dep:base64", "image", "video"]
 
 [dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "process"] }
 reqwest = { version = "0.12", features = ["json", "multipart"] }
+tempfile = { version = "3", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

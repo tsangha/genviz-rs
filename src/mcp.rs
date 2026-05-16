@@ -73,8 +73,24 @@ fn api_key_env_var(provider: &str) -> Option<&'static str> {
         "kling" => Some("KLING_ACCESS_KEY"),
         "fal" => Some("FAL_KEY"),
         "minimax" => Some("MINIMAX_API_KEY"),
+        // Higgsfield auth lives in the `higgsfield` CLI session, not an env var.
+        "higgsfield" => None,
         _ => None,
     }
+}
+
+/// Best-effort check: is the `higgsfield` CLI on PATH and apparently logged in?
+/// We avoid a real network call — just verify the binary exists, since `auth login`
+/// state is opaque from outside the CLI.
+fn is_higgsfield_cli_logged_in() -> bool {
+    use std::process::{Command, Stdio};
+    Command::new("higgsfield")
+        .arg("version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 /// Maximum concurrent generations (hard limit).
@@ -395,8 +411,8 @@ impl McpServer {
                         },
                         "provider": {
                             "type": "string",
-                            "enum": ["flux", "gemini", "grok", "openai", "kling", "fal"],
-                            "description": "AI provider to use (default: gemini)"
+                            "enum": ["flux", "gemini", "grok", "openai", "kling", "fal", "higgsfield"],
+                            "description": "AI provider to use (default: gemini). `higgsfield` shells out to the local `higgsfield` CLI."
                         },
                         "output_path": {
                             "type": "string",
@@ -431,7 +447,8 @@ impl McpServer {
                                 "grok-imagine",
                                 "kling-v1", "kling-v1.5", "kling-v2",
                                 "gpt-image-2", "gpt-image-1", "dall-e-3",
-                                "flux-schnell", "flux-pro-ultra", "recraft-v3", "recraft-v4.1", "recraft-v4.1-pro", "ideogram-v3", "hidream"
+                                "flux-schnell", "flux-pro-ultra", "recraft-v3", "recraft-v4.1", "recraft-v4.1-pro", "ideogram-v3", "hidream",
+                                "gpt_image_2", "nano_banana_2", "text2image_soul_v2", "flux_2", "flux_kontext", "soul_cinematic", "soul_location", "seedream_v4_5", "seedream_v5_lite", "kling_omni_image", "cinematic_studio_2_5", "z_image"
                             ],
                             "description": "Model variant. Must match the selected provider. Call list_providers to see which models belong to which provider."
                         },
@@ -472,7 +489,7 @@ impl McpServer {
                         },
                         "provider": {
                             "type": "string",
-                            "enum": ["grok", "openai", "veo", "kling", "fal", "minimax"],
+                            "enum": ["grok", "openai", "veo", "kling", "fal", "minimax", "higgsfield"],
                             "description": "AI provider to use (default: grok)"
                         },
                         "output_path": {
@@ -572,7 +589,7 @@ impl McpServer {
                         },
                         "model": {
                             "type": "string",
-                            "description": "Model variant. veo: veo-3.1-generate-preview, veo-3.1-lite-generate-preview. fal: wan-2.1, wan-2.7, happy-horse, hailuo-std, hailuo-pro, hailuo-fast, seedance-pro, seedance-lite, seedance-1.5, seedance-2.0, seedance-2.0-fast, ltx-video, kling-std, kling-pro. minimax: hailuo-2.3, hailuo-2.3-fast."
+                            "description": "Model variant. veo: veo-3.1-generate-preview, veo-3.1-lite-generate-preview. fal: wan-2.1, wan-2.7, happy-horse, hailuo-std, hailuo-pro, hailuo-fast, seedance-pro, seedance-lite, seedance-1.5, seedance-2.0, seedance-2.0-fast, ltx-video, kling-std, kling-pro. minimax: hailuo-2.3, hailuo-2.3-fast. higgsfield: seedance-2.0, veo3-1, veo3-1-lite, kling3-0, wan2-7, soul-cast, …"
                         }
                     },
                     "required": ["prompt", "output_path"]
@@ -734,6 +751,28 @@ impl McpServer {
                         "width_height": true,
                         "seed": true
                     }
+                },
+                {
+                    "name": "higgsfield",
+                    "api_key_env": "(higgsfield auth login)",
+                    "api_key_set": is_higgsfield_cli_logged_in(),
+                    "backend": "cli",
+                    "default_model": "gpt_image_2",
+                    "models": [
+                        "gpt_image_2", "nano_banana_2", "nano_banana_flash",
+                        "flux_2", "flux_kontext",
+                        "text2image_soul_v2", "soul_cinematic", "soul_location",
+                        "seedream_v4_5", "seedream_v5_lite",
+                        "kling_omni_image", "cinematic_studio_2_5", "grok_image", "z_image"
+                    ],
+                    "surfaces": ["generate", "product-photoshoot", "marketplace-cards"],
+                    "capabilities": {
+                        "editing": true,
+                        "aspect_ratio": true,
+                        "seed": true,
+                        "soul_id": true,
+                        "modes": ["product_shot", "lifestyle_scene", "closeup_product_with_person", "moodboard_pin", "hero_banner", "social_carousel", "ad_creative_pack", "virtual_model_tryout", "conceptual_product", "restyle"]
+                    }
                 }
             ],
             "video_providers": [
@@ -823,6 +862,31 @@ impl McpServer {
                         "first_last_frame": true,
                         "subject_reference": true,
                         "prompt_optimizer": true
+                    }
+                },
+                {
+                    "name": "higgsfield",
+                    "api_key_env": "(higgsfield auth login)",
+                    "api_key_set": is_higgsfield_cli_logged_in(),
+                    "backend": "cli",
+                    "default_model": "seedance_2_0",
+                    "models": [
+                        "seedance_2_0", "seedance1_5",
+                        "veo3_1", "veo3_1_lite", "veo3",
+                        "kling3_0", "kling2_6",
+                        "wan2_7", "wan2_6",
+                        "minimax_hailuo", "grok_video",
+                        "soul_cast",
+                        "cinematic_studio_3_0", "cinematic_studio_video_v2", "marketing_studio_video"
+                    ],
+                    "capabilities": {
+                        "duration": true,
+                        "aspect_ratio": true,
+                        "resolution": true,
+                        "image_to_video": true,
+                        "first_last_frame": true,
+                        "negative_prompt": true,
+                        "soul_id": true
                     }
                 }
             ]
@@ -1062,6 +1126,7 @@ impl McpServer {
                 "kling" => generate_video_with_kling(&params).await,
                 "fal" => generate_video_with_fal(&params).await,
                 "minimax" => generate_video_with_minimax(&params).await,
+                "higgsfield" => generate_video_with_higgsfield(&params).await,
                 _ => Err(format!("Unknown video provider: {}", provider_name)),
             }
         })
@@ -1274,6 +1339,7 @@ async fn generate_single(
         "openai" => generate_with_openai(request, model).await?,
         "kling" => generate_with_kling(request, model).await?,
         "fal" => generate_with_fal(request, model).await?,
+        "higgsfield" => generate_with_higgsfield(request, model).await?,
         _ => return Err(format!("Unknown provider: {}", provider)),
     };
 
@@ -1517,6 +1583,47 @@ async fn generate_with_fal(
     _model: Option<&str>,
 ) -> Result<GeneratedImage, String> {
     Err("fal.ai image provider not enabled".to_string())
+}
+
+#[cfg(feature = "higgsfield-image")]
+async fn generate_with_higgsfield(
+    request: &GenerationRequest,
+    model: Option<&str>,
+) -> Result<GeneratedImage, String> {
+    use crate::image::ImageProvider;
+    use crate::{HiggsfieldImageModel as M, HiggsfieldImageProvider};
+
+    let mut builder = HiggsfieldImageProvider::builder();
+    if let Some(m) = model {
+        let chosen = match m {
+            "gpt-image-2" | "gpt_image_2" => M::GptImage2,
+            "nano-banana-pro" | "nano_banana_2" => M::NanoBananaPro,
+            "nano-banana-2" | "nano_banana_flash" => M::NanoBanana2,
+            "flux-2" | "flux_2" => M::Flux2,
+            "flux-kontext" | "flux_kontext" => M::FluxKontext,
+            "soul-v2" | "text2image_soul_v2" => M::SoulV2,
+            "soul-cinematic" | "soul_cinematic" => M::SoulCinematic,
+            "soul-location" | "soul_location" => M::SoulLocation,
+            "seedream-4.5" | "seedream_v4_5" => M::Seedream45,
+            "seedream-5-lite" | "seedream_v5_lite" => M::Seedream5Lite,
+            "kling-omni" | "kling_omni_image" => M::KlingOmni,
+            "cinematic-studio-2.5" | "cinematic_studio_2_5" => M::CinematicStudio25,
+            "grok-image" | "grok_image" => M::GrokImage,
+            "z-image" | "z_image" => M::ZImage,
+            other => M::Custom(other.to_string()),
+        };
+        builder = builder.model(chosen);
+    }
+    let provider = builder.build().map_err(|e| e.to_string())?;
+    provider.generate(request).await.map_err(|e| e.to_string())
+}
+
+#[cfg(not(feature = "higgsfield-image"))]
+async fn generate_with_higgsfield(
+    _request: &GenerationRequest,
+    _model: Option<&str>,
+) -> Result<GeneratedImage, String> {
+    Err("Higgsfield image provider not enabled".to_string())
 }
 
 fn parse_aspect_ratio(s: &str) -> Option<crate::image::AspectRatio> {
@@ -1967,6 +2074,84 @@ async fn generate_video_with_minimax(
     })
 }
 
+#[cfg(feature = "higgsfield-video")]
+async fn generate_video_with_higgsfield(
+    params: &GenerateVideoParams,
+) -> Result<VideoGenerationResult, String> {
+    use crate::video::{VideoGenerationRequest, VideoProvider};
+    use crate::{HiggsfieldVideoModel as M, HiggsfieldVideoProvider};
+
+    let mut request = VideoGenerationRequest::new(&params.prompt);
+    if let Some(d) = params.duration {
+        request = request.with_duration(d);
+    }
+    if let Some(ar) = &params.aspect_ratio {
+        request = request.with_aspect_ratio(ar.clone());
+    }
+    if let Some(res) = &params.resolution {
+        request = request.with_resolution(res.clone());
+    }
+    if let Some(neg) = &params.negative_prompt {
+        request = request.with_negative_prompt(neg.clone());
+    }
+    if let Some(url) = &params.source_image_url {
+        request = request.with_source_image(url.clone());
+    }
+    if let Some(url) = &params.last_frame_url {
+        request = request.with_last_frame_url(url.clone());
+    }
+    if let Some(seed) = params.seed {
+        request = request.with_seed(seed);
+    }
+
+    let mut builder = HiggsfieldVideoProvider::builder();
+    if let Some(model_name) = &params.model {
+        let model = match model_name.as_str() {
+            "seedance-2.0" | "seedance-2" | "seedance_2_0" => M::Seedance20,
+            "seedance-1.5" | "seedance1_5" => M::Seedance15Pro,
+            "veo3-1" | "veo-3.1" | "veo3_1" => M::Veo31,
+            "veo3-1-lite" | "veo-3.1-lite" | "veo3_1_lite" => M::Veo31Lite,
+            "veo3" | "veo-3" => M::Veo3,
+            "kling3-0" | "kling-3.0" | "kling3_0" => M::Kling30,
+            "kling2-6" | "kling-2.6" | "kling2_6" => M::Kling26,
+            "wan2-7" | "wan-2.7" | "wan2_7" => M::Wan27,
+            "wan2-6" | "wan-2.6" | "wan2_6" => M::Wan26,
+            "hailuo" | "minimax-hailuo" | "minimax_hailuo" => M::Hailuo,
+            "grok-video" | "grok_video" => M::GrokVideo,
+            "soul-cast" | "soul_cast" => M::SoulCast,
+            "cinematic-studio-3.0" | "cinematic_studio_3_0" => M::CinematicStudio3,
+            "cinematic-studio-video-v2" | "cinematic_studio_video_v2" => M::CinematicStudioVideoV2,
+            "marketing-studio-video" | "marketing_studio_video" => M::MarketingStudioVideo,
+            other => M::Custom(other.to_string()),
+        };
+        builder = builder.model(model);
+    }
+
+    let provider = builder.build().map_err(|e| e.to_string())?;
+    let video = provider
+        .generate(&request)
+        .await
+        .map_err(|e| e.to_string())?;
+    video.save(&params.output_path).map_err(|e| e.to_string())?;
+
+    Ok(VideoGenerationResult {
+        success: true,
+        provider: "higgsfield".to_string(),
+        output_path: params.output_path.clone(),
+        size_bytes: video.size(),
+        model: video.metadata.model,
+        duration_ms: video.metadata.duration_ms,
+        video_duration_secs: video.metadata.video_duration_secs,
+    })
+}
+
+#[cfg(not(feature = "higgsfield-video"))]
+async fn generate_video_with_higgsfield(
+    _params: &GenerateVideoParams,
+) -> Result<VideoGenerationResult, String> {
+    Err("Higgsfield video provider not enabled".to_string())
+}
+
 #[cfg(not(feature = "minimax-video"))]
 async fn generate_video_with_minimax(
     _params: &GenerateVideoParams,
@@ -2014,6 +2199,14 @@ fn validate_image_params(provider: &str, params: &GenerateImageParams) -> Result
             }
             if params.seed.is_some() {
                 return Err("Kling does not support seed".to_string());
+            }
+        }
+        "higgsfield" => {
+            if params.width.is_some() || params.height.is_some() {
+                return Err(
+                    "Higgsfield does not support width/height (use aspect_ratio instead)"
+                        .to_string(),
+                );
             }
         }
         _ => {
@@ -2094,8 +2287,8 @@ mod tests {
         // Verify structure
         let image_providers = providers["image_providers"].as_array().unwrap();
         let video_providers = providers["video_providers"].as_array().unwrap();
-        assert_eq!(image_providers.len(), 6);
-        assert_eq!(video_providers.len(), 6);
+        assert_eq!(image_providers.len(), 7);
+        assert_eq!(video_providers.len(), 7);
 
         // Verify each image provider has required fields
         for p in image_providers {
@@ -2113,7 +2306,15 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            vec!["gemini", "flux", "grok", "openai", "kling", "fal"]
+            vec![
+                "gemini",
+                "flux",
+                "grok",
+                "openai",
+                "kling",
+                "fal",
+                "higgsfield"
+            ]
         );
     }
 

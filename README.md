@@ -69,7 +69,7 @@ Swap `GeminiProvider` for `FluxProvider`, `GrokProvider`, or `OpenAiImageProvide
 
 ---
 
-Works with [Gemini](https://aistudio.google.com/apikey), [Flux](https://api.bfl.ai) (13 models), [Grok](https://x.ai), [OpenAI](https://platform.openai.com) (gpt-image-2, gpt-image-1, DALL-E 3), [Sora](https://platform.openai.com), [Veo](https://aistudio.google.com/apikey) (3.1 + 3.1 Lite), [Kling](https://app.klingai.com), [fal.ai](https://fal.ai) (Flux, Recraft V4.1, Wan 2.7, Seedance 2.0, Happy Horse, Hailuo 2.3, Kling, LTX, …), and [MiniMax](https://platform.minimax.io) (Hailuo 2.3). You only need an API key for the provider you want to use.
+Works with [Gemini](https://aistudio.google.com/apikey), [Flux](https://api.bfl.ai) (13 models), [Grok](https://x.ai), [OpenAI](https://platform.openai.com) (gpt-image-2, gpt-image-1, DALL-E 3), [Sora](https://platform.openai.com), [Veo](https://aistudio.google.com/apikey) (3.1 + 3.1 Lite), [Kling](https://app.klingai.com), [fal.ai](https://fal.ai) (Flux, Recraft V4.1, Wan 2.7, Seedance 2.0, Happy Horse, Hailuo 2.3, Kling, LTX, …), [MiniMax](https://platform.minimax.io) (Hailuo 2.3), and [Higgsfield](https://higgsfield.ai) (GPT Image 2, Nano Banana Pro, Soul V2, Seedance 2.0, Veo 3.1, Kling 3.0 + product-photoshoot / marketplace-card / Soul ID workflows). You only need an API key for the provider you want to use (Higgsfield uses the local `higgsfield` CLI session).
 
 ## CLI
 
@@ -141,6 +141,8 @@ genviz = { version = "0.2", default-features = false, features = ["gemini-image"
 | `gemini-image` | yes | Gemini |
 | `grok-image` | yes | Grok Imagine |
 | `openai-image` | yes | OpenAI (gpt-image-2, gpt-image-1, DALL-E 3) |
+| `higgsfield-image` | yes | Higgsfield image (CLI-backed; gpt-image-2, nano-banana-pro, soul-v2, …) |
+| `higgsfield-video` | yes | Higgsfield video (CLI-backed; seedance-2.0, veo3-1-lite, kling3-0, soul-cast, …) |
 | `grok-video` | yes | Grok video |
 | `openai-video` | yes | Sora |
 | `veo` | yes | Veo |

@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-05-16
+
+### Added
+- **Higgsfield provider** (CLI-backed) — wraps the local `higgsfield` binary; no extra HTTP client
+  - `HiggsfieldImageProvider` with 14 named image models (gpt-image-2, nano-banana-pro, soul-v2, flux-2, seedream-4.5, …) plus `Custom(String)` escape hatch
+  - `HiggsfieldVideoProvider` with 15 named video models (seedance-2.0, veo3-1, veo3-1-lite, kling3-0, wan2-7, soul-cast, …) plus `Custom(String)`
+  - Three surfaces: free-form `generate`, `product-photoshoot` (10 modes: product_shot, lifestyle_scene, hero_banner, ad_creative_pack, virtual_model_tryout, …), and `marketplace-cards`
+  - Soul Character support: `HiggsfieldImageProviderBuilder::soul_id(id)` and `HiggsfieldVideoProviderBuilder::soul_id(id)` for identity-faithful generation
+  - New feature flags `higgsfield-image` and `higgsfield-video` (added to the umbrella `image` / `video` sets)
+  - New variants `ImageProviderKind::Higgsfield` and `VideoProviderKind::Higgsfield`
+  - CLI: `genviz image|video --provider higgsfield --model <…>`
+  - MCP: `provider: "higgsfield"` accepted on `generate_image` and `generate_video`; surfaces/models reported in `list_providers`
+  - Auth is delegated to the `higgsfield` CLI session (`higgsfield auth login`); no new env vars
+- `.claude/skills/genviz/references/higgsfield.md` — lazy-loaded reference (only read when the task involves Higgsfield)
+
+### Changed
+- **BREAKING** — `ImageProviderKind` and `VideoProviderKind` gain a `Higgsfield` variant. Downstream `match` arms without a `_` wildcard need updating.
+- `tokio` now requires the `process` feature (transparent for users via genviz; called out for re-exporters).
+
 ## [0.2.2] - 2026-05-16
 
 ### Added

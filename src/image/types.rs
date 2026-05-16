@@ -92,6 +92,8 @@ pub enum ImageProviderKind {
     Kling,
     /// fal.ai image models.
     Fal,
+    /// Higgsfield (CLI-backed: GPT Image 2, Soul V2, Nano Banana Pro, Seedream, …).
+    Higgsfield,
 }
 
 impl std::fmt::Display for ImageProviderKind {
@@ -103,6 +105,7 @@ impl std::fmt::Display for ImageProviderKind {
             Self::OpenAI => write!(f, "openai"),
             Self::Kling => write!(f, "kling"),
             Self::Fal => write!(f, "fal"),
+            Self::Higgsfield => write!(f, "higgsfield"),
         }
     }
 }
