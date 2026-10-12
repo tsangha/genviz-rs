@@ -323,6 +323,7 @@ impl FalImageProvider {
 #[async_trait]
 impl ImageProvider for FalImageProvider {
     async fn generate(&self, request: &GenerationRequest) -> Result<GeneratedImage> {
+        request.check_input_images("fal.ai", 1)?;
         let start = Instant::now();
         let model_id = self.model.as_str();
 
@@ -430,7 +431,7 @@ impl FalImageRequest {
                 .map(|ar| FalImageSize::Named(aspect_ratio_to_image_size(ar)))
         };
 
-        let image_url = req.input_image.as_ref().map(|img| {
+        let image_url = req.input_images.first().map(|img| {
             format!(
                 "data:image/png;base64,{}",
                 base64::engine::general_purpose::STANDARD.encode(img)

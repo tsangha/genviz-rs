@@ -28,6 +28,9 @@ enum Commands {
     /// Generate a video from a text prompt
     Video(Box<VideoArgs>),
 
+    /// Slice a character strip into a uniform WebP sprite strip
+    Sprite(SpriteArgs),
+
     /// Batch image generation via Vertex AI
     Batch {
         #[command(subcommand)]
@@ -67,7 +70,7 @@ struct BatchSubmitArgs {
     #[arg(long)]
     gcs_bucket: String,
 
-    /// Model variant (nano-banana, nano-banana-pro)
+    /// Model variant (nano-banana-pro, nano-banana-2.1, nano-banana-2, nano-banana)
     #[arg(long, default_value = "nano-banana-pro")]
     model: String,
 
@@ -125,13 +128,54 @@ struct ImageArgs {
     #[arg(long, value_enum)]
     aspect_ratio: Option<AspectRatioArg>,
 
-    /// Input image for editing (path to image file)
+    /// Input/reference image (repeat for multi-reference: OpenAI, Gemini, Grok up to 5, FLUX.2 up to 8, klein up to 4)
     #[arg(short, long)]
-    input: Option<PathBuf>,
+    input: Vec<PathBuf>,
 
-    /// Model variant (flux: flux-pro-1.1, flux-pro-1.1-ultra, flux-pro, flux-dev, flux-2-max, flux-2-pro, flux-2-flex, flux-2-klein-4b, flux-2-klein-9b, flux-kontext-pro, flux-kontext-max, flux-fill-pro, flux-expand-pro; gemini: nano-banana, nano-banana-pro; grok: grok-imagine; openai: gpt-image-2, gpt-image-1, dall-e-3; kling: kling-v1, kling-v1.5, kling-v2; fal: flux-schnell, flux-pro, flux-pro-ultra, recraft-v3, recraft-v4.1, recraft-v4.1-pro, ideogram-v3, hidream)
+    /// Background (OpenAI only)
+    #[arg(long, value_parser = ["transparent", "opaque", "auto"])]
+    background: Option<String>,
+
+    /// Quality (OpenAI only)
+    #[arg(long, value_parser = ["low", "medium", "high", "xhigh", "max", "auto"])]
+    quality: Option<String>,
+
+    /// Model variant (flux: flux-2-pro-preview, flux-2-pro, flux-2-max, flux-2-flex, flux-2-klein-4b, flux-2-klein-9b-preview, flux-2-klein-9b, flux-pro-1.1, flux-pro-1.1-ultra, flux-dev, flux-kontext-pro, flux-kontext-max, flux-fill-pro, flux-expand-pro; gemini: nano-banana-pro, nano-banana-2.1, nano-banana-2, nano-banana; grok: grok-imagine-image-2.0, grok-imagine-image; openai: gpt-image-2.5-sunburst, gpt-image-2.5-flare, gpt-image-2; kling: kling-v1, kling-v1.5, kling-v2; fal: flux-schnell, flux-pro, flux-pro-ultra, recraft-v3, recraft-v4.1, recraft-v4.1-pro, ideogram-v3, hidream)
     #[arg(long)]
     model: Option<String>,
+}
+
+#[derive(Args)]
+struct SpriteArgs {
+    /// Strip image containing the figures
+    strip: PathBuf,
+
+    /// Number of figures to find
+    #[arg(long)]
+    frames: usize,
+
+    /// Rows the figures are laid out in (row-major)
+    #[arg(long, default_value_t = 1)]
+    rows: usize,
+
+    /// Output cell size, WxH
+    #[arg(long, value_parser = parse_cell)]
+    cell: (u32, u32),
+
+    /// Output WebP path
+    #[arg(short, long)]
+    output: PathBuf,
+
+    /// Remove a flat background from the corners when the strip has no transparency
+    #[arg(long, value_parser = ["auto", "none"], default_value = "auto")]
+    key: String,
+}
+
+fn parse_cell(s: &str) -> Result<(u32, u32), String> {
+    s.split_once('x')
+        .and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)))
+        .filter(|&(w, h)| w > 0 && h > 0)
+        .ok_or_else(|| format!("expected WxH, got {s}"))
 }
 
 #[derive(Args)]
@@ -311,6 +355,9 @@ async fn main() -> anyhow::Result<()> {
         Commands::Video(args) => {
             generate_video(*args, cli.json).await?;
         }
+        Commands::Sprite(args) => {
+            make_sprite(args, cli.json)?;
+        }
         Commands::Batch { action } => {
             run_batch(action, cli.json).await?;
         }
@@ -326,6 +373,11 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn validate_image_args(args: &ImageArgs) -> anyhow::Result<()> {
+    if !matches!(args.provider, ImageProviderArg::Openai)
+        && (args.background.is_some() || args.quality.is_some())
+    {
+        anyhow::bail!("--background and --quality are only supported by the openai provider");
+    }
     match args.provider {
         ImageProviderArg::Gemini => {
             if args.aspect_ratio.is_some() {
@@ -344,8 +396,7 @@ fn validate_image_args(args: &ImageArgs) -> anyhow::Result<()> {
             if args.seed.is_some() {
                 anyhow::bail!("Grok does not support --seed");
             }
-            // Grok edit endpoint doesn't support aspect_ratio
-            if args.input.is_some() && args.aspect_ratio.is_some() {
+            if !args.input.is_empty() && args.aspect_ratio.is_some() {
                 anyhow::bail!("Grok does not support --aspect-ratio when editing images");
             }
         }
@@ -397,9 +448,9 @@ async fn generate_image(args: ImageArgs, json_output: bool) -> anyhow::Result<()
         request = request.with_aspect_ratio(ar.into());
     }
 
-    // Read input image for editing
-    if let Some(ref input_path) = args.input {
-        let input_data = std::fs::read(input_path)?;
+    for input_path in &args.input {
+        let input_data = std::fs::read(input_path)
+            .map_err(|e| anyhow::anyhow!("reading {}: {e}", input_path.display()))?;
         request = request.with_input_image(input_data);
     }
 
@@ -410,7 +461,7 @@ async fn generate_image(args: ImageArgs, json_output: bool) -> anyhow::Result<()
     }
 
     if !json_output {
-        let action = if args.input.is_some() {
+        let action = if !args.input.is_empty() {
             "Editing"
         } else {
             "Generating"
@@ -424,25 +475,9 @@ async fn generate_image(args: ImageArgs, json_output: bool) -> anyhow::Result<()
             {
                 let mut builder = genviz::FluxProvider::builder();
                 if let Some(ref m) = args.model {
-                    let model = match m.as_str() {
-                        "flux-pro-1.1" => genviz::FluxModel::FluxPro11,
-                        "flux-pro-1.1-ultra" => genviz::FluxModel::FluxPro11Ultra,
-                        "flux-pro" => genviz::FluxModel::FluxPro,
-                        "flux-dev" => genviz::FluxModel::FluxDev,
-                        "flux-2-max" | "flux2-max" => genviz::FluxModel::Flux2Max,
-                        "flux-2-pro" | "flux2-pro" => genviz::FluxModel::Flux2Pro,
-                        "flux-2-flex" | "flux2-flex" => genviz::FluxModel::Flux2Flex,
-                        "flux-2-klein-4b" | "flux2-klein-4b" => genviz::FluxModel::Flux2Klein4B,
-                        "flux-2-klein-9b" | "flux2-klein-9b" => genviz::FluxModel::Flux2Klein9B,
-                        "flux-kontext-pro" | "kontext-pro" => genviz::FluxModel::KontextPro,
-                        "flux-kontext-max" | "kontext-max" => genviz::FluxModel::KontextMax,
-                        "flux-fill-pro" | "fill-pro" => genviz::FluxModel::FillPro,
-                        "flux-expand-pro" | "expand-pro" => genviz::FluxModel::ExpandPro,
-                        _ => anyhow::bail!(
-                            "Unknown Flux model: {}. Options: flux-pro-1.1, flux-pro-1.1-ultra, flux-pro, flux-dev, flux-2-max, flux-2-pro, flux-2-flex, flux-2-klein-4b, flux-2-klein-9b, flux-kontext-pro, flux-kontext-max, flux-fill-pro, flux-expand-pro",
-                            m
-                        ),
-                    };
+                    let model = genviz::FluxModel::from_name(m).ok_or_else(|| {
+                        anyhow::anyhow!("Unknown Flux model: {}. See genviz image --help", m)
+                    })?;
                     builder = builder.model(model);
                 }
                 let provider = builder.build()?;
@@ -458,14 +493,9 @@ async fn generate_image(args: ImageArgs, json_output: bool) -> anyhow::Result<()
             {
                 let mut builder = genviz::GeminiProvider::builder();
                 if let Some(ref m) = args.model {
-                    let model = match m.as_str() {
-                        "nano-banana" => genviz::GeminiModel::NanoBanana,
-                        "nano-banana-pro" => genviz::GeminiModel::NanoBananaPro,
-                        _ => anyhow::bail!(
-                            "Unknown Gemini model: {}. Options: nano-banana, nano-banana-pro",
-                            m
-                        ),
-                    };
+                    let model = genviz::GeminiModel::from_name(m).ok_or_else(|| {
+                        anyhow::anyhow!("Unknown Gemini model: {}. See genviz image --help", m)
+                    })?;
                     builder = builder.model(model);
                 }
                 let provider = builder.build()?;
@@ -481,10 +511,9 @@ async fn generate_image(args: ImageArgs, json_output: bool) -> anyhow::Result<()
             {
                 let mut builder = genviz::GrokProvider::builder();
                 if let Some(ref m) = args.model {
-                    let model = match m.as_str() {
-                        "grok-imagine" => genviz::GrokModel::GrokImagine,
-                        _ => anyhow::bail!("Unknown Grok model: {}. Options: grok-imagine", m),
-                    };
+                    let model = genviz::GrokModel::from_name(m).ok_or_else(|| {
+                        anyhow::anyhow!("Unknown Grok model: {}. See genviz image --help", m)
+                    })?;
                     builder = builder.model(model);
                 }
                 let provider = builder.build()?;
@@ -499,16 +528,16 @@ async fn generate_image(args: ImageArgs, json_output: bool) -> anyhow::Result<()
             #[cfg(feature = "openai-image")]
             {
                 let mut builder = genviz::OpenAiImageProvider::builder();
+                if let Some(ref q) = args.quality {
+                    builder = builder.quality(q);
+                }
+                if let Some(ref b) = args.background {
+                    builder = builder.background(b);
+                }
                 if let Some(ref m) = args.model {
-                    let model = match m.as_str() {
-                        "gpt-image-2" => genviz::OpenAiImageModel::GptImage2,
-                        "gpt-image-1" => genviz::OpenAiImageModel::GptImage1,
-                        "dall-e-3" => genviz::OpenAiImageModel::DallE3,
-                        _ => anyhow::bail!(
-                            "Unknown OpenAI model: {}. Options: gpt-image-2, gpt-image-1, dall-e-3",
-                            m
-                        ),
-                    };
+                    let model = genviz::OpenAiImageModel::from_name(m).ok_or_else(|| {
+                        anyhow::anyhow!("Unknown OpenAI model: {}. See genviz image --help", m)
+                    })?;
                     builder = builder.model(model);
                 }
                 let provider = builder.build()?;
@@ -602,17 +631,18 @@ async fn generate_image(args: ImageArgs, json_output: bool) -> anyhow::Result<()
     image.save(&args.output)?;
 
     if json_output {
+        let (width, height) = ::image::ImageReader::new(std::io::Cursor::new(&image.data))
+            .with_guessed_format()?
+            .into_dimensions()?;
         let result = serde_json::json!({
-            "type": "image",
-            "success": true,
-            "output": args.output.display().to_string(),
-            "size_bytes": image.size(),
-            "format": image.format.extension(),
+            "path": args.output.display().to_string(),
+            "width": width,
+            "height": height,
             "provider": image.provider.to_string(),
             "model": image.metadata.model,
-            "duration_ms": image.metadata.duration_ms,
+            "durationMs": image.metadata.duration_ms,
         });
-        println!("{}", serde_json::to_string_pretty(&result)?);
+        println!("{result}");
     } else {
         println!(
             "Generated image: {} ({} bytes) via {}",
@@ -961,14 +991,12 @@ async fn run_batch(action: BatchCommands, json_output: bool) -> anyhow::Result<(
                 anyhow::bail!("No prompts provided. Pass them as arguments or use --prompts-file.");
             }
 
-            let model = match args.model.as_str() {
-                "nano-banana" => genviz::GeminiModel::NanoBanana,
-                "nano-banana-pro" => genviz::GeminiModel::NanoBananaPro,
-                _ => anyhow::bail!(
-                    "Unknown model: {}. Options: nano-banana, nano-banana-pro",
+            let model = genviz::GeminiModel::from_name(&args.model).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Unknown model: {}. Options: nano-banana-pro, nano-banana-2.1, nano-banana-2, nano-banana",
                     args.model
-                ),
-            };
+                )
+            })?;
 
             if !json_output {
                 eprint!(
@@ -1083,6 +1111,50 @@ async fn run_batch(action: BatchCommands, json_output: bool) -> anyhow::Result<(
     Ok(())
 }
 
+fn make_sprite(args: SpriteArgs, json_output: bool) -> anyhow::Result<()> {
+    use genviz::sprite::{pack, Key, SpriteOptions};
+    let strip = ::image::open(&args.strip)
+        .map_err(|e| anyhow::anyhow!("reading {}: {e}", args.strip.display()))?
+        .to_rgba8();
+    let sprite = pack(
+        &strip,
+        SpriteOptions {
+            frames: args.frames,
+            rows: args.rows,
+            cell_width: args.cell.0,
+            cell_height: args.cell.1,
+            key: if args.key == "none" {
+                Key::None
+            } else {
+                Key::Auto
+            },
+        },
+    )?;
+    let file = std::io::BufWriter::new(std::fs::File::create(&args.output)?);
+    sprite
+        .image
+        .write_with_encoder(::image::codecs::webp::WebPEncoder::new_lossless(file))?;
+    if json_output {
+        let result = serde_json::json!({
+            "path": args.output.display().to_string(),
+            "frames": args.frames,
+            "cell": { "width": args.cell.0, "height": args.cell.1 },
+            "loopDelta": sprite.loop_delta,
+            "heightSpread": sprite.height_spread,
+        });
+        println!("{result}");
+    } else {
+        println!(
+            "Packed {} frames into {} (loop delta {:.3}, height spread {:.3})",
+            args.frames,
+            args.output.display(),
+            sprite.loop_delta,
+            sprite.height_spread
+        );
+    }
+    Ok(())
+}
+
 async fn run_mcp_server() -> anyhow::Result<()> {
     eprintln!("[genviz-mcp] Starting MCP server...");
     let mut server = genviz::mcp::McpServer::new();
@@ -1103,28 +1175,28 @@ fn list_providers(json_output: bool) -> anyhow::Result<()> {
     let providers = vec![
         // Image providers
         ProviderInfo {
-            name: "Flux (Black Forest Labs) - models: flux-pro-1.1, flux-pro-1.1-ultra, flux-pro, flux-dev, flux-2-max, flux-2-pro, flux-2-flex, flux-2-klein-4b, flux-2-klein-9b, flux-kontext-pro, flux-kontext-max, flux-fill-pro, flux-expand-pro",
+            name: "Flux (Black Forest Labs) - models: flux-2-pro-preview, flux-2-pro, flux-2-max, flux-2-flex, flux-2-klein-4b, flux-2-klein-9b-preview, flux-2-klein-9b, flux-pro-1.1, flux-pro-1.1-ultra, flux-dev, flux-kontext-pro, flux-kontext-max, flux-fill-pro, flux-expand-pro",
             kind: "flux",
             media_type: "image",
             env_var: "BFL_API_KEY",
             enabled: cfg!(feature = "flux-image"),
         },
         ProviderInfo {
-            name: "Gemini (Google)",
+            name: "Gemini (Google) - nano-banana-pro, nano-banana-2.1, nano-banana-2, nano-banana",
             kind: "gemini",
             media_type: "image",
             env_var: "GOOGLE_API_KEY",
             enabled: cfg!(feature = "gemini-image"),
         },
         ProviderInfo {
-            name: "Grok Imagine (xAI)",
+            name: "Grok Imagine (xAI) - grok-imagine-image-2.0, grok-imagine-image",
             kind: "grok",
             media_type: "image",
             env_var: "XAI_API_KEY",
             enabled: cfg!(feature = "grok-image"),
         },
         ProviderInfo {
-            name: "OpenAI (gpt-image-1, dall-e-3)",
+            name: "OpenAI (gpt-image-2.5-sunburst, gpt-image-2.5-flare, gpt-image-2)",
             kind: "openai",
             media_type: "image",
             env_var: "OPENAI_API_KEY",

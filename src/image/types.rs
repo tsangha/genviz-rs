@@ -189,10 +189,9 @@ pub struct GenerationRequest {
     pub aspect_ratio: Option<AspectRatio>,
     /// Desired output format.
     pub format: Option<ImageFormat>,
-    /// Input image for editing/inpainting (raw bytes).
-    /// Supported by Gemini and Flux, not Grok.
+    /// Input/reference images for editing (raw bytes), in order.
     #[serde(skip)]
-    pub input_image: Option<Vec<u8>>,
+    pub input_images: Vec<Vec<u8>>,
 }
 
 impl GenerationRequest {
@@ -205,7 +204,7 @@ impl GenerationRequest {
             seed: None,
             aspect_ratio: None,
             format: None,
-            input_image: None,
+            input_images: Vec::new(),
         }
     }
 
@@ -234,16 +233,26 @@ impl GenerationRequest {
         self
     }
 
-    /// Sets an input image for editing/inpainting.
-    /// Supported by Gemini and Flux providers.
+    /// Adds an input/reference image. Call repeatedly for multi-reference edits.
     pub fn with_input_image(mut self, image: Vec<u8>) -> Self {
-        self.input_image = Some(image);
+        self.input_images.push(image);
         self
     }
 
-    /// Returns true if this is an image editing request (has input image).
+    /// Returns true if this is an image editing request (has input images).
     pub fn is_edit(&self) -> bool {
-        self.input_image.is_some()
+        !self.input_images.is_empty()
+    }
+
+    /// Fails when more input images are attached than `provider` accepts.
+    pub fn check_input_images(&self, provider: &str, max: usize) -> Result<()> {
+        if self.input_images.len() > max {
+            return Err(GenVizError::InvalidRequest(format!(
+                "{provider} accepts at most {max} input image(s), got {}",
+                self.input_images.len()
+            )));
+        }
+        Ok(())
     }
 }
 

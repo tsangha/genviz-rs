@@ -13,24 +13,26 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum FluxModel {
     /// FLUX.1 Pro 1.1 - high quality text-to-image generation.
-    #[default]
     FluxPro11,
     /// FLUX.1 Pro 1.1 Ultra - highest quality with 4MP output.
     FluxPro11Ultra,
-    /// FLUX.1 Pro - professional quality generation.
-    FluxPro,
     /// FLUX.1 Dev - fast development/testing model.
     FluxDev,
 
     /// FLUX.2 Max - latest generation with editing support.
     Flux2Max,
-    /// FLUX.2 Pro - professional quality with editing.
+    /// FLUX.2 Pro preview - BFL's latest FLUX.2 [pro] weights (recommended).
+    #[default]
+    Flux2ProPreview,
+    /// FLUX.2 Pro - pinned snapshot, professional quality with editing.
     Flux2Pro,
     /// FLUX.2 Flex - flexible generation and editing.
     Flux2Flex,
     /// FLUX.2 Klein 4B - lightweight 4 billion parameter model.
     Flux2Klein4B,
-    /// FLUX.2 Klein 9B - mid-size 9 billion parameter model.
+    /// FLUX.2 Klein 9B preview - latest 9B weights with KV caching.
+    Flux2Klein9BPreview,
+    /// FLUX.2 Klein 9B - pinned snapshot of the 9 billion parameter model.
     Flux2Klein9B,
 
     /// Kontext Pro - context-aware image editing.
@@ -51,12 +53,13 @@ impl FluxModel {
         match self {
             Self::FluxPro11 => "flux-pro-1.1",
             Self::FluxPro11Ultra => "flux-pro-1.1-ultra",
-            Self::FluxPro => "flux-pro",
             Self::FluxDev => "flux-dev",
             Self::Flux2Max => "flux-2-max",
+            Self::Flux2ProPreview => "flux-2-pro-preview",
             Self::Flux2Pro => "flux-2-pro",
             Self::Flux2Flex => "flux-2-flex",
             Self::Flux2Klein4B => "flux-2-klein-4b",
+            Self::Flux2Klein9BPreview => "flux-2-klein-9b-preview",
             Self::Flux2Klein9B => "flux-2-klein-9b",
             Self::KontextPro => "flux-kontext-pro",
             Self::KontextMax => "flux-kontext-max",
@@ -68,6 +71,36 @@ impl FluxModel {
     /// Returns the API model identifier string.
     pub fn as_str(&self) -> &'static str {
         self.endpoint()
+    }
+
+    /// Parses a CLI/MCP model name (endpoint id or short alias).
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match name.replace("flux2-", "flux-2-").as_str() {
+            "flux-pro-1.1" => Self::FluxPro11,
+            "flux-pro-1.1-ultra" => Self::FluxPro11Ultra,
+            "flux-dev" => Self::FluxDev,
+            "flux-2-max" => Self::Flux2Max,
+            "flux-2-pro-preview" => Self::Flux2ProPreview,
+            "flux-2-pro" => Self::Flux2Pro,
+            "flux-2-flex" => Self::Flux2Flex,
+            "flux-2-klein-4b" => Self::Flux2Klein4B,
+            "flux-2-klein-9b-preview" => Self::Flux2Klein9BPreview,
+            "flux-2-klein-9b" => Self::Flux2Klein9B,
+            "flux-kontext-pro" | "kontext-pro" => Self::KontextPro,
+            "flux-kontext-max" | "kontext-max" => Self::KontextMax,
+            "flux-fill-pro" | "fill-pro" | "flux-pro-1.0-fill" => Self::FillPro,
+            "flux-expand-pro" | "expand-pro" | "flux-pro-1.0-expand" => Self::ExpandPro,
+            _ => return None,
+        })
+    }
+
+    /// Maximum number of input images the endpoint accepts.
+    fn max_input_images(&self) -> usize {
+        match self {
+            Self::Flux2Klein4B | Self::Flux2Klein9B | Self::Flux2Klein9BPreview => 4,
+            Self::Flux2Max | Self::Flux2ProPreview | Self::Flux2Pro | Self::Flux2Flex => 8,
+            _ => 1,
+        }
     }
 }
 
@@ -192,32 +225,28 @@ impl FluxProvider {
 
     /// Returns (task_id, polling_url).
     async fn submit(&self, request: &GenerationRequest) -> Result<(String, String)> {
-        // Validate Fill/Expand models require input images
-        match self.model {
-            FluxModel::FillPro => {
-                if request.input_image.is_none() {
-                    return Err(GenVizError::InvalidRequest(
-                        "Fill model requires an input image and mask. Use with_input_image() to provide the source image.".into(),
-                    ));
-                }
-            }
-            FluxModel::ExpandPro => {
-                if request.input_image.is_none() {
-                    return Err(GenVizError::InvalidRequest(
-                        "Expand model requires an input image. Use with_input_image() to provide the source image.".into(),
-                    ));
-                }
-            }
-            _ => {}
+        request.check_input_images(
+            &format!("Flux {}", self.model.as_str()),
+            self.model.max_input_images(),
+        )?;
+        if request.input_images.is_empty()
+            && matches!(self.model, FluxModel::FillPro | FluxModel::ExpandPro)
+        {
+            return Err(GenVizError::InvalidRequest(format!(
+                "{} requires an input image. Use with_input_image() to provide the source image.",
+                self.model.as_str()
+            )));
         }
 
-        let url = if request.input_image.is_some() {
+        let url = if request.is_edit() {
             match self.model {
                 // FLUX.2 models handle editing natively
                 FluxModel::Flux2Max
+                | FluxModel::Flux2ProPreview
                 | FluxModel::Flux2Pro
                 | FluxModel::Flux2Flex
                 | FluxModel::Flux2Klein4B
+                | FluxModel::Flux2Klein9BPreview
                 | FluxModel::Flux2Klein9B => {
                     format!("https://api.bfl.ai/v1/{}", self.model.endpoint())
                 }
@@ -430,6 +459,9 @@ struct FluxRequest {
     /// Input image for editing (base64 encoded).
     #[serde(skip_serializing_if = "Option::is_none")]
     input_image: Option<String>,
+    /// Further reference images as `input_image_2`, `input_image_3`, … (FLUX.2).
+    #[serde(flatten)]
+    more_input_images: std::collections::BTreeMap<String, String>,
 }
 
 impl FluxRequest {
@@ -443,9 +475,21 @@ impl FluxRequest {
             seed: req.seed,
             aspect_ratio: req.aspect_ratio.map(|ar| ar.as_str().to_string()),
             input_image: req
-                .input_image
-                .as_ref()
+                .input_images
+                .first()
                 .map(|img| base64::engine::general_purpose::STANDARD.encode(img)),
+            more_input_images: req
+                .input_images
+                .iter()
+                .enumerate()
+                .skip(1)
+                .map(|(i, img)| {
+                    (
+                        format!("input_image_{}", i + 1),
+                        base64::engine::general_purpose::STANDARD.encode(img),
+                    )
+                })
+                .collect(),
         }
     }
 }
@@ -481,7 +525,11 @@ mod tests {
     fn test_flux_model_endpoint() {
         assert_eq!(FluxModel::FluxPro11.endpoint(), "flux-pro-1.1");
         assert_eq!(FluxModel::FluxPro11Ultra.endpoint(), "flux-pro-1.1-ultra");
-        assert_eq!(FluxModel::FluxPro.endpoint(), "flux-pro");
+        assert_eq!(FluxModel::Flux2ProPreview.endpoint(), "flux-2-pro-preview");
+        assert_eq!(
+            FluxModel::Flux2Klein9BPreview.endpoint(),
+            "flux-2-klein-9b-preview"
+        );
         assert_eq!(FluxModel::FluxDev.endpoint(), "flux-dev");
         assert_eq!(FluxModel::Flux2Max.endpoint(), "flux-2-max");
         assert_eq!(FluxModel::Flux2Pro.endpoint(), "flux-2-pro");
@@ -499,7 +547,6 @@ mod tests {
         let models = [
             FluxModel::FluxPro11,
             FluxModel::FluxPro11Ultra,
-            FluxModel::FluxPro,
             FluxModel::FluxDev,
             FluxModel::Flux2Max,
             FluxModel::Flux2Pro,
@@ -513,12 +560,13 @@ mod tests {
         ];
         for model in models {
             assert_eq!(model.as_str(), model.endpoint());
+            assert_eq!(FluxModel::from_name(model.as_str()), Some(model));
         }
     }
 
     #[test]
     fn test_flux_model_default() {
-        assert_eq!(FluxModel::default(), FluxModel::FluxPro11);
+        assert_eq!(FluxModel::default(), FluxModel::Flux2ProPreview);
     }
 
     #[test]
@@ -638,6 +686,12 @@ mod tests {
         let flux_req = FluxRequest::from_generation_request(&req);
 
         assert!(flux_req.input_image.is_some());
+
+        let multi = req.with_input_image(vec![1]).with_input_image(vec![2]);
+        let json = serde_json::to_value(FluxRequest::from_generation_request(&multi)).unwrap();
+        assert!(json.get("input_image_2").is_some());
+        assert!(json.get("input_image_3").is_some());
+        assert!(json.get("input_image_4").is_none());
     }
 
     #[test]

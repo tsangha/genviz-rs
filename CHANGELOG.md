@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-10-12
+
+### Added
+- OpenAI `gpt-image-2.5-sunburst` and `gpt-image-2.5-flare` (released 2026-09-08); Flare is the new OpenAI default
+- Gemini `nano-banana-2.1` (`gemini-nano-banana-2.1`) and `nano-banana-2` (`gemini-3.1-flash-image`)
+- Grok `grok-imagine-image-2.0` (new Grok default)
+- Flux `flux-2-pro-preview` (new Flux default) and `flux-2-klein-9b-preview`
+- Multi-reference input: `GenerationRequest::with_input_image` now appends; CLI `--input` is repeatable. OpenAI, Gemini, Grok (≤5) and FLUX.2 (klein ≤4, others ≤8) receive every image; single-image providers fail with a clear error
+- CLI `--background transparent|opaque|auto` and `--quality low|medium|high|xhigh|max|auto` (OpenAI only)
+- `genviz sprite <strip> --frames N [--rows R] --cell WxH -o out.webp [--key auto|none]` and the `sprite` feature / `genviz::sprite` module: slices figures at transparent gaps, keeps a shared baseline, one shared scale, packs a lossless WebP strip, reports `loopDelta` and `heightSpread`
+
+### Changed
+- **BREAKING** — `genviz image --json` prints one line `{"path","width","height","provider","model","durationMs"}`
+- **BREAKING** — `GenerationRequest::input_image: Option<Vec<u8>>` is now `input_images: Vec<Vec<u8>>`
+- Nano Banana Pro uses the GA id `gemini-3-pro-image` on both the Gemini API and Vertex AI; `GeminiModel::vertex_id` removed
+- Model names are parsed by `from_name` on each model enum (shared by CLI and MCP)
+- MCP `generate_image` validates parameters before checking for API keys
+
+### Removed
+- OpenAI `dall-e-3` (shut down 2026-05-12) and `gpt-image-1` (shuts down 2026-10-23)
+- Flux `flux-pro` (FLUX.1 [pro] 1.0, deprecated by BFL)
+- Gemini `nano-banana-pro-preview` / `gemini-3-pro-image-preview` ids (shut down 2026-06-25)
+
 ## [0.3.0] - 2026-05-16
 
 ### Added

@@ -1,6 +1,6 @@
 [package]
 name = "genviz"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 description = "Unified AI media generation (image + video) via Flux, Gemini, Grok, OpenAI, Kling, fal.ai, MiniMax, Veo, and Higgsfield APIs"
 license = "MIT"
@@ -37,8 +37,11 @@ fal-video = ["dep:base64"]
 minimax-video = ["dep:base64"]
 higgsfield-video = ["dep:tempfile"]
 
+# Sprite sheet packing (pure Rust)
+sprite = ["dep:image"]
+
 # CLI binary
-cli = ["dep:clap", "dep:anyhow", "dep:tracing-subscriber", "dep:base64", "image", "video"]
+cli = ["dep:clap", "dep:anyhow", "dep:tracing-subscriber", "dep:base64", "image", "video", "sprite"]
 
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "process"] }
@@ -54,6 +57,7 @@ jsonwebtoken = { version = "9", optional = true }
 clap = { version = "4", features = ["derive", "env"], optional = true }
 anyhow = { version = "1", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"], optional = true }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"], optional = true }
 
 [[bin]]
 name = "genviz"

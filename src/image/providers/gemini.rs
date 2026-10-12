@@ -37,28 +37,37 @@ pub enum GeminiBackend {
 /// Gemini image model variants.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum GeminiModel {
-    /// Nano Banana - Gemini 2.5 Flash Image (fast, economical).
+    /// Nano Banana - Gemini 2.5 Flash Image (deprecated, shuts down 2027-03-15).
     NanoBanana,
+    /// Nano Banana 2 - Gemini 3.1 Flash Image.
+    NanoBanana2,
+    /// Nano Banana 2.1 - latest high-efficiency image model.
+    NanoBanana21,
     /// Nano Banana Pro - Gemini 3 Pro Image (highest quality).
     #[default]
     NanoBananaPro,
 }
 
 impl GeminiModel {
-    /// Returns the Gemini Developer API model identifier.
+    /// Returns the model identifier (same on the Gemini Developer API and Vertex AI).
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::NanoBanana => "gemini-2.5-flash-image",
-            Self::NanoBananaPro => "nano-banana-pro-preview",
+            Self::NanoBanana2 => "gemini-3.1-flash-image",
+            Self::NanoBanana21 => "gemini-nano-banana-2.1",
+            Self::NanoBananaPro => "gemini-3-pro-image",
         }
     }
 
-    /// Returns the Vertex AI model identifier.
-    pub fn vertex_id(&self) -> &'static str {
-        match self {
-            Self::NanoBanana => "gemini-2.5-flash-image",
-            Self::NanoBananaPro => "gemini-3-pro-image-preview",
-        }
+    /// Parses a CLI/MCP model name.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "nano-banana" => Self::NanoBanana,
+            "nano-banana-2" => Self::NanoBanana2,
+            "nano-banana-2.1" => Self::NanoBanana21,
+            "nano-banana-pro" => Self::NanoBananaPro,
+            _ => return None,
+        })
     }
 }
 
@@ -204,7 +213,7 @@ impl GeminiProvider {
                     .await?
             }
             GeminiBackend::Vertex { project, location } => {
-                let model_id = self.model.vertex_id();
+                let model_id = self.model.as_str();
                 // Use global endpoint — Gemini 3 models are only available there,
                 // and Gemini 2.x also works on global.
                 let url = format!(
@@ -309,10 +318,7 @@ impl GeminiProvider {
             _ => ImageFormat::Png,
         };
 
-        let model_name = match &self.backend {
-            GeminiBackend::Gemini => self.model.as_str(),
-            GeminiBackend::Vertex { .. } => self.model.vertex_id(),
-        };
+        let model_name = self.model.as_str();
 
         Ok(GeneratedImage::new(
             data,
@@ -408,7 +414,7 @@ impl ImageProvider for GeminiProvider {
             }
             GeminiBackend::Vertex { project, location } => {
                 let token = gcloud_access_token()?;
-                let model_id = self.model.vertex_id();
+                let model_id = self.model.as_str();
                 let _ = location;
                 let url = format!(
                     "https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/publishers/google/models/{model_id}",
@@ -504,7 +510,7 @@ pub async fn submit_batch(
     let output_uri_prefix = format!("gs://{}/genviz-batch/{}/output/", bucket_name, batch_id);
 
     // Submit batch prediction job
-    let model_id = model.vertex_id();
+    let model_id = model.as_str();
     let batch_url = format!(
         "https://{location}-aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/batchPredictionJobs",
     );
@@ -906,8 +912,7 @@ impl GeminiRequest {
     fn from_generation_request(req: &GenerationRequest) -> Self {
         let mut parts = Vec::new();
 
-        // Add input image first if present (for editing)
-        if let Some(ref image_data) = req.input_image {
+        for image_data in &req.input_images {
             let mime_type = crate::image::types::ImageFormat::from_magic_bytes(image_data)
                 .map(|f| f.mime_type())
                 .unwrap_or("image/png")
@@ -991,22 +996,11 @@ mod tests {
 
     #[test]
     fn test_gemini_model_as_str() {
-        assert_eq!(GeminiModel::NanoBanana.as_str(), "gemini-2.5-flash-image");
+        assert_eq!(GeminiModel::NanoBanana21.as_str(), "gemini-nano-banana-2.1");
+        assert_eq!(GeminiModel::NanoBananaPro.as_str(), "gemini-3-pro-image");
         assert_eq!(
-            GeminiModel::NanoBananaPro.as_str(),
-            "nano-banana-pro-preview"
-        );
-    }
-
-    #[test]
-    fn test_gemini_model_vertex_id() {
-        assert_eq!(
-            GeminiModel::NanoBanana.vertex_id(),
-            "gemini-2.5-flash-image"
-        );
-        assert_eq!(
-            GeminiModel::NanoBananaPro.vertex_id(),
-            "gemini-3-pro-image-preview"
+            GeminiModel::from_name("nano-banana-2"),
+            Some(GeminiModel::NanoBanana2)
         );
     }
 

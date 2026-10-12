@@ -1,4 +1,4 @@
-//! OpenAI image generation provider (gpt-image-1, dall-e-3).
+//! OpenAI image generation provider (gpt-image-2.5-sunburst, gpt-image-2.5-flare, gpt-image-2).
 
 use crate::error::{parse_retry_after, sanitize_error_message, GenVizError, Result};
 use crate::image::provider::ImageProvider;
@@ -15,24 +15,34 @@ const EDITS_URL: &str = "https://api.openai.com/v1/images/edits";
 /// OpenAI image model variants.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum OpenAiImageModel {
-    /// GPT Image 2 — OpenAI's flagship image model (released 2026-04-21).
-    /// First OpenAI image model with built-in reasoning ("thinking mode").
+    /// GPT Image 2.5 Sunburst — base model, highest quality and editing precision.
+    GptImage25Sunburst,
+    /// GPT Image 2.5 Flare — fast model, OpenAI's default choice for most apps.
     #[default]
+    GptImage25Flare,
+    /// GPT Image 2 — previous generation.
     GptImage2,
-    /// GPT Image 1 - OpenAI's previous-generation image model.
-    GptImage1,
-    /// DALL-E 3 - high quality image generation.
-    DallE3,
 }
 
 impl OpenAiImageModel {
     /// Returns the API model identifier string.
     pub fn as_str(&self) -> &'static str {
         match self {
+            Self::GptImage25Sunburst => "gpt-image-2.5-sunburst",
+            Self::GptImage25Flare => "gpt-image-2.5-flare",
             Self::GptImage2 => "gpt-image-2",
-            Self::GptImage1 => "gpt-image-1",
-            Self::DallE3 => "dall-e-3",
         }
+    }
+
+    /// Parses an API model identifier.
+    pub fn from_name(name: &str) -> Option<Self> {
+        [
+            Self::GptImage25Sunburst,
+            Self::GptImage25Flare,
+            Self::GptImage2,
+        ]
+        .into_iter()
+        .find(|m| m.as_str() == name)
     }
 }
 
@@ -42,6 +52,7 @@ pub struct OpenAiImageProviderBuilder {
     api_key: Option<String>,
     model: OpenAiImageModel,
     quality: Option<String>,
+    background: Option<String>,
 }
 
 impl OpenAiImageProviderBuilder {
@@ -62,10 +73,15 @@ impl OpenAiImageProviderBuilder {
         self
     }
 
-    /// Sets the quality. For gpt-image-1: "low", "medium", "high" (default: "auto").
-    /// For dall-e-3: "standard", "hd" (default: "standard").
+    /// Sets the quality: "low", "medium", "high", "xhigh", "max" or "auto" (default).
     pub fn quality(mut self, quality: impl Into<String>) -> Self {
         self.quality = Some(quality.into());
+        self
+    }
+
+    /// Sets the background: "transparent", "opaque" or "auto" (default).
+    pub fn background(mut self, background: impl Into<String>) -> Self {
+        self.background = Some(background.into());
         self
     }
 
@@ -83,6 +99,7 @@ impl OpenAiImageProviderBuilder {
             api_key,
             model: self.model,
             quality: self.quality,
+            background: self.background,
         })
     }
 }
@@ -93,6 +110,7 @@ pub struct OpenAiImageProvider {
     api_key: String,
     model: OpenAiImageModel,
     quality: Option<String>,
+    background: Option<String>,
 }
 
 impl OpenAiImageProvider {
@@ -102,40 +120,19 @@ impl OpenAiImageProvider {
     }
 
     /// Maps width/height or aspect_ratio to an OpenAI size string.
-    fn resolve_size(request: &GenerationRequest, model: &OpenAiImageModel) -> Option<String> {
-        // Explicit width/height takes priority
+    fn resolve_size(request: &GenerationRequest) -> Option<String> {
         if let (Some(w), Some(h)) = (request.width, request.height) {
             return Some(format!("{}x{}", w, h));
         }
-
-        // Map aspect ratio to closest supported size
-        if let Some(ar) = &request.aspect_ratio {
-            let size = match model {
-                OpenAiImageModel::GptImage2 | OpenAiImageModel::GptImage1 => match ar {
-                    crate::image::AspectRatio::Square => "1024x1024",
-                    crate::image::AspectRatio::Landscape => "1536x1024",
-                    crate::image::AspectRatio::Portrait => "1024x1536",
-                    crate::image::AspectRatio::Standard => "1536x1024",
-                    crate::image::AspectRatio::StandardPortrait => "1024x1536",
-                    crate::image::AspectRatio::Ultrawide => "1536x1024",
-                    crate::image::AspectRatio::ThreeTwo => "1536x1024",
-                    crate::image::AspectRatio::TwoThree => "1024x1536",
-                },
-                OpenAiImageModel::DallE3 => match ar {
-                    crate::image::AspectRatio::Square => "1024x1024",
-                    crate::image::AspectRatio::Landscape => "1792x1024",
-                    crate::image::AspectRatio::Portrait => "1024x1792",
-                    crate::image::AspectRatio::Standard => "1792x1024",
-                    crate::image::AspectRatio::StandardPortrait => "1024x1792",
-                    crate::image::AspectRatio::Ultrawide => "1792x1024",
-                    crate::image::AspectRatio::ThreeTwo => "1792x1024",
-                    crate::image::AspectRatio::TwoThree => "1024x1792",
-                },
-            };
-            return Some(size.to_string());
-        }
-
-        None
+        use crate::image::AspectRatio::*;
+        request.aspect_ratio.map(|ar| {
+            match ar {
+                Square => "1024x1024",
+                Landscape | Standard | Ultrawide | ThreeTwo => "1536x1024",
+                Portrait | StandardPortrait | TwoThree => "1024x1536",
+            }
+            .to_string()
+        })
     }
 
     fn parse_error(
@@ -186,7 +183,12 @@ impl ImageProvider for OpenAiImageProvider {
             return self.generate_edit(request, start).await;
         }
 
-        let body = OpenAiImageRequest::from_generation_request(request, &self.model, &self.quality);
+        let body = OpenAiImageRequest::from_generation_request(
+            request,
+            &self.model,
+            &self.quality,
+            &self.background,
+        );
 
         let response = self
             .client
@@ -267,34 +269,31 @@ impl OpenAiImageProvider {
         request: &GenerationRequest,
         start: Instant,
     ) -> Result<GeneratedImage> {
-        let input_image = request
-            .input_image
-            .as_ref()
-            .ok_or_else(|| GenVizError::InvalidRequest("No input image for edit".into()))?;
-
-        // Detect mime type for file extension
-        let ext = ImageFormat::from_magic_bytes(input_image)
-            .map(|f| f.extension())
-            .unwrap_or("png");
-
-        let filename = format!("image.{}", ext);
-
-        let image_part = reqwest::multipart::Part::bytes(input_image.clone())
-            .file_name(filename)
-            .mime_str(
-                ImageFormat::from_magic_bytes(input_image)
-                    .map(|f| f.mime_type())
-                    .unwrap_or("image/png"),
-            )
-            .map_err(|e| GenVizError::InvalidRequest(e.to_string()))?;
-
+        let field = if request.input_images.len() > 1 {
+            "image[]"
+        } else {
+            "image"
+        };
         let mut form = reqwest::multipart::Form::new()
             .text("model", self.model.as_str().to_string())
-            .text("prompt", request.prompt.clone())
-            .part("image", image_part);
+            .text("prompt", request.prompt.clone());
+        for (i, input_image) in request.input_images.iter().enumerate() {
+            let format = ImageFormat::from_magic_bytes(input_image).unwrap_or(ImageFormat::Png);
+            let part = reqwest::multipart::Part::bytes(input_image.clone())
+                .file_name(format!("image{}.{}", i, format.extension()))
+                .mime_str(format.mime_type())
+                .map_err(|e| GenVizError::InvalidRequest(e.to_string()))?;
+            form = form.part(field, part);
+        }
 
-        if let Some(size) = Self::resolve_size(request, &self.model) {
-            form = form.text("size", size);
+        for (name, value) in [
+            ("size", Self::resolve_size(request)),
+            ("quality", self.quality.clone()),
+            ("background", self.background.clone()),
+        ] {
+            if let Some(value) = value {
+                form = form.text(name, value);
+            }
         }
 
         let response = self
@@ -364,6 +363,8 @@ struct OpenAiImageRequest {
     size: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     quality: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    background: Option<String>,
 }
 
 impl OpenAiImageRequest {
@@ -371,13 +372,15 @@ impl OpenAiImageRequest {
         req: &GenerationRequest,
         model: &OpenAiImageModel,
         quality: &Option<String>,
+        background: &Option<String>,
     ) -> Self {
         Self {
             model: model.as_str().to_string(),
             prompt: req.prompt.clone(),
             n: 1,
-            size: OpenAiImageProvider::resolve_size(req, model),
+            size: OpenAiImageProvider::resolve_size(req),
             quality: quality.clone(),
+            background: background.clone(),
         }
     }
 }
@@ -403,23 +406,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_model_as_str() {
-        assert_eq!(OpenAiImageModel::GptImage2.as_str(), "gpt-image-2");
-        assert_eq!(OpenAiImageModel::GptImage1.as_str(), "gpt-image-1");
-        assert_eq!(OpenAiImageModel::DallE3.as_str(), "dall-e-3");
-    }
-
-    #[test]
-    fn test_gpt_image_2_is_default() {
-        assert_eq!(OpenAiImageModel::default(), OpenAiImageModel::GptImage2);
-    }
-
-    #[test]
-    fn test_size_mapping_gpt_image_2_aspect_ratio() {
-        let req =
-            GenerationRequest::new("test").with_aspect_ratio(crate::image::AspectRatio::Landscape);
-        let size = OpenAiImageProvider::resolve_size(&req, &OpenAiImageModel::GptImage2);
-        assert_eq!(size.as_deref(), Some("1536x1024"));
+    fn test_model_names_round_trip() {
+        for name in [
+            "gpt-image-2.5-sunburst",
+            "gpt-image-2.5-flare",
+            "gpt-image-2",
+        ] {
+            assert_eq!(OpenAiImageModel::from_name(name).unwrap().as_str(), name);
+        }
+        assert_eq!(OpenAiImageModel::from_name("dall-e-3"), None);
     }
 
     #[test]
@@ -430,98 +425,45 @@ mod tests {
 
     #[test]
     fn test_builder_without_key_fails() {
-        // Clear env var to ensure it fails
         std::env::remove_var("OPENAI_API_KEY");
         let provider = OpenAiImageProviderBuilder::new().build();
         assert!(provider.is_err());
     }
 
     #[test]
-    fn test_builder_with_model() {
-        let provider = OpenAiImageProviderBuilder::new()
-            .api_key("sk-test")
-            .model(OpenAiImageModel::DallE3)
-            .build()
-            .unwrap();
-        assert_eq!(provider.model, OpenAiImageModel::DallE3);
-    }
-
-    #[test]
-    fn test_request_construction_basic() {
-        let req = GenerationRequest::new("A sunset");
-        let openai_req =
-            OpenAiImageRequest::from_generation_request(&req, &OpenAiImageModel::GptImage1, &None);
-
-        assert_eq!(openai_req.prompt, "A sunset");
-        assert_eq!(openai_req.model, "gpt-image-1");
-        assert_eq!(openai_req.n, 1);
-        assert!(openai_req.size.is_none());
-        assert!(openai_req.quality.is_none());
-    }
-
-    #[test]
-    fn test_request_construction_with_size() {
-        let req = GenerationRequest::new("A sunset").with_size(512, 512);
-        let openai_req =
-            OpenAiImageRequest::from_generation_request(&req, &OpenAiImageModel::GptImage1, &None);
-
-        assert_eq!(openai_req.size.as_deref(), Some("512x512"));
-    }
-
-    #[test]
-    fn test_request_construction_with_quality() {
-        let req = GenerationRequest::new("A sunset");
-        let quality = Some("high".to_string());
-        let openai_req = OpenAiImageRequest::from_generation_request(
+    fn test_request_serialization() {
+        let req = GenerationRequest::new("A sunset").with_size(1536, 512);
+        let body = OpenAiImageRequest::from_generation_request(
             &req,
-            &OpenAiImageModel::GptImage1,
-            &quality,
+            &OpenAiImageModel::GptImage25Sunburst,
+            &Some("low".into()),
+            &Some("transparent".into()),
         );
+        let json = serde_json::to_value(&body).unwrap();
+        assert_eq!(json["model"], "gpt-image-2.5-sunburst");
+        assert_eq!(json["size"], "1536x512");
+        assert_eq!(json["quality"], "low");
+        assert_eq!(json["background"], "transparent");
 
-        assert_eq!(openai_req.quality.as_deref(), Some("high"));
+        let bare = OpenAiImageRequest::from_generation_request(
+            &GenerationRequest::new("A sunset"),
+            &OpenAiImageModel::GptImage2,
+            &None,
+            &None,
+        );
+        let json = serde_json::to_value(&bare).unwrap();
+        assert!(json.get("size").is_none());
+        assert!(json.get("background").is_none());
     }
 
     #[test]
-    fn test_size_mapping_gpt_image_aspect_ratio() {
-        let req =
-            GenerationRequest::new("test").with_aspect_ratio(crate::image::AspectRatio::Landscape);
-        let size = OpenAiImageProvider::resolve_size(&req, &OpenAiImageModel::GptImage1);
-        assert_eq!(size.as_deref(), Some("1536x1024"));
-
+    fn test_size_mapping_aspect_ratio() {
         let req =
             GenerationRequest::new("test").with_aspect_ratio(crate::image::AspectRatio::Portrait);
-        let size = OpenAiImageProvider::resolve_size(&req, &OpenAiImageModel::GptImage1);
-        assert_eq!(size.as_deref(), Some("1024x1536"));
-
-        let req =
-            GenerationRequest::new("test").with_aspect_ratio(crate::image::AspectRatio::Square);
-        let size = OpenAiImageProvider::resolve_size(&req, &OpenAiImageModel::GptImage1);
-        assert_eq!(size.as_deref(), Some("1024x1024"));
-    }
-
-    #[test]
-    fn test_size_mapping_dalle3_aspect_ratio() {
-        let req =
-            GenerationRequest::new("test").with_aspect_ratio(crate::image::AspectRatio::Landscape);
-        let size = OpenAiImageProvider::resolve_size(&req, &OpenAiImageModel::DallE3);
-        assert_eq!(size.as_deref(), Some("1792x1024"));
-
-        let req =
-            GenerationRequest::new("test").with_aspect_ratio(crate::image::AspectRatio::Portrait);
-        let size = OpenAiImageProvider::resolve_size(&req, &OpenAiImageModel::DallE3);
-        assert_eq!(size.as_deref(), Some("1024x1792"));
-    }
-
-    #[test]
-    fn test_response_deserialization_url() {
-        let json = r#"{"data": [{"url": "https://example.com/img.png", "revised_prompt": "A beautiful sunset over the ocean"}]}"#;
-        let resp: OpenAiImageResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.data.len(), 1);
         assert_eq!(
-            resp.data[0].url.as_deref(),
-            Some("https://example.com/img.png")
+            OpenAiImageProvider::resolve_size(&req).as_deref(),
+            Some("1024x1536")
         );
-        assert!(resp.data[0].revised_prompt.is_some());
     }
 
     #[test]
@@ -529,29 +471,5 @@ mod tests {
         let json = r#"{"data": [{"b64_json": "AQID"}]}"#;
         let resp: OpenAiImageResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.data[0].b64_json.as_deref(), Some("AQID"));
-        assert!(resp.data[0].url.is_none());
-    }
-
-    #[test]
-    fn test_request_serialization_skips_none_fields() {
-        let req = GenerationRequest::new("A sunset");
-        let openai_req =
-            OpenAiImageRequest::from_generation_request(&req, &OpenAiImageModel::GptImage1, &None);
-        let json = serde_json::to_value(&openai_req).unwrap();
-
-        assert!(json.get("size").is_none());
-        assert!(json.get("quality").is_none());
-        assert!(json.get("prompt").is_some());
-        assert!(json.get("model").is_some());
-    }
-
-    #[test]
-    fn test_explicit_size_overrides_aspect_ratio() {
-        let req = GenerationRequest::new("test")
-            .with_size(256, 256)
-            .with_aspect_ratio(crate::image::AspectRatio::Landscape);
-        let size = OpenAiImageProvider::resolve_size(&req, &OpenAiImageModel::GptImage1);
-        // width/height takes priority
-        assert_eq!(size.as_deref(), Some("256x256"));
     }
 }

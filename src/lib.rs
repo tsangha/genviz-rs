@@ -41,7 +41,7 @@
 //! - `flux-image`: Flux (Black Forest Labs)
 //! - `gemini-image`: Gemini (Google)
 //! - `grok-image`: Grok Imagine (xAI)
-//! - `openai-image`: OpenAI (gpt-image-1, dall-e-3)
+//! - `openai-image`: OpenAI (gpt-image-2.5-sunburst, gpt-image-2.5-flare, gpt-image-2)
 //! - `fal-image`: fal.ai (Flux, Recraft, Ideogram, HiDream)
 //!
 //! ## Video Generation
@@ -55,9 +55,12 @@
 //! ## Meta Features
 //! - `image`: All image providers
 //! - `video`: All video providers
+//! - `sprite`: Sprite sheet packing (`genviz::sprite`)
 //! - `cli`: Command-line interface
 
 mod error;
+#[cfg(feature = "sprite")]
+pub mod sprite;
 
 #[cfg(any(feature = "gemini-image", feature = "veo"))]
 pub(crate) mod auth;

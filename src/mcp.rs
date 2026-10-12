@@ -438,15 +438,15 @@ impl McpServer {
                         "model": {
                             "type": "string",
                             "enum": [
-                                "nano-banana", "nano-banana-pro",
-                                "flux-pro-1.1", "flux-pro-1.1-ultra", "flux-pro", "flux-dev",
-                                "flux-2-max", "flux-2-pro", "flux-2-flex",
-                                "flux-2-klein-4b", "flux-2-klein-9b",
+                                "nano-banana", "nano-banana-2", "nano-banana-2.1", "nano-banana-pro",
+                                "flux-pro-1.1", "flux-pro-1.1-ultra", "flux-dev",
+                                "flux-2-max", "flux-2-pro-preview", "flux-2-pro", "flux-2-flex",
+                                "flux-2-klein-4b", "flux-2-klein-9b-preview", "flux-2-klein-9b",
                                 "flux-kontext-pro", "flux-kontext-max",
                                 "flux-fill-pro", "flux-expand-pro",
-                                "grok-imagine",
+                                "grok-imagine-image-2.0", "grok-imagine-image",
                                 "kling-v1", "kling-v1.5", "kling-v2",
-                                "gpt-image-2", "gpt-image-1", "dall-e-3",
+                                "gpt-image-2.5-sunburst", "gpt-image-2.5-flare", "gpt-image-2",
                                 "flux-schnell", "flux-pro-ultra", "recraft-v3", "recraft-v4.1", "recraft-v4.1-pro", "ideogram-v3", "hidream",
                                 "gpt_image_2", "nano_banana_2", "text2image_soul_v2", "flux_2", "flux_kontext", "soul_cinematic", "soul_location", "seedream_v4_5", "seedream_v5_lite", "kling_omni_image", "cinematic_studio_2_5", "z_image"
                             ],
@@ -616,7 +616,7 @@ impl McpServer {
                     },
                     "model": {
                         "type": "string",
-                        "enum": ["nano-banana", "nano-banana-pro"],
+                        "enum": ["nano-banana", "nano-banana-2", "nano-banana-2.1", "nano-banana-pro"],
                         "description": "Model variant (default: nano-banana-pro)"
                     }
                 },
@@ -672,7 +672,7 @@ impl McpServer {
                     "api_key_set": if std::env::var("VERTEX_AI_PROJECT").is_ok() { true } else { check_key("GOOGLE_API_KEY") },
                     "backend": if std::env::var("VERTEX_AI_PROJECT").is_ok() { "vertex" } else { "gemini" },
                     "default_model": "nano-banana-pro",
-                    "models": ["nano-banana", "nano-banana-pro"],
+                    "models": ["nano-banana", "nano-banana-2", "nano-banana-2.1", "nano-banana-pro"],
                     "capabilities": {
                         "editing": true,
                         "aspect_ratio": false,
@@ -685,11 +685,11 @@ impl McpServer {
                     "name": "flux",
                     "api_key_env": "BFL_API_KEY",
                     "api_key_set": check_key("BFL_API_KEY"),
-                    "default_model": "flux-pro-1.1",
+                    "default_model": "flux-2-pro-preview",
                     "models": [
-                        "flux-pro-1.1", "flux-pro-1.1-ultra", "flux-pro", "flux-dev",
-                        "flux-2-max", "flux-2-pro", "flux-2-flex",
-                        "flux-2-klein-4b", "flux-2-klein-9b",
+                        "flux-pro-1.1", "flux-pro-1.1-ultra", "flux-dev",
+                        "flux-2-max", "flux-2-pro-preview", "flux-2-pro", "flux-2-flex",
+                        "flux-2-klein-4b", "flux-2-klein-9b-preview", "flux-2-klein-9b",
                         "flux-kontext-pro", "flux-kontext-max",
                         "flux-fill-pro", "flux-expand-pro"
                     ],
@@ -704,8 +704,8 @@ impl McpServer {
                     "name": "grok",
                     "api_key_env": "XAI_API_KEY",
                     "api_key_set": check_key("XAI_API_KEY"),
-                    "default_model": "grok-imagine",
-                    "models": ["grok-imagine"],
+                    "default_model": "grok-imagine-image-2.0",
+                    "models": ["grok-imagine-image-2.0", "grok-imagine-image"],
                     "capabilities": {
                         "editing": true,
                         "aspect_ratio": true,
@@ -717,8 +717,8 @@ impl McpServer {
                     "name": "openai",
                     "api_key_env": "OPENAI_API_KEY",
                     "api_key_set": check_key("OPENAI_API_KEY"),
-                    "default_model": "gpt-image-2",
-                    "models": ["gpt-image-2", "gpt-image-1", "dall-e-3"],
+                    "default_model": "gpt-image-2.5-flare",
+                    "models": ["gpt-image-2.5-sunburst", "gpt-image-2.5-flare", "gpt-image-2"],
                     "capabilities": {
                         "editing": true,
                         "aspect_ratio": true,
@@ -921,20 +921,6 @@ impl McpServer {
             return JsonRpcResponse::error(id, -32602, e);
         }
 
-        // Pre-flight API key check (fail fast before spawning tasks)
-        if let Some(env_var) = api_key_env_var(provider_name) {
-            if std::env::var(env_var).is_err() {
-                return JsonRpcResponse::error(
-                    id,
-                    -32602,
-                    format!(
-                        "{} requires {} environment variable to be set",
-                        provider_name, env_var
-                    ),
-                );
-            }
-        }
-
         // Validate and clamp count/concurrency
         let count = params.count.unwrap_or(1).clamp(1, MAX_COUNT);
         let concurrency = params
@@ -1000,6 +986,20 @@ impl McpServer {
                         format!("Invalid base64 in input_image: {}", e),
                     );
                 }
+            }
+        }
+
+        // Pre-flight API key check (fail fast before spawning tasks)
+        if let Some(env_var) = api_key_env_var(provider_name) {
+            if std::env::var(env_var).is_err() {
+                return JsonRpcResponse::error(
+                    id,
+                    -32602,
+                    format!(
+                        "{} requires {} environment variable to be set",
+                        provider_name, env_var
+                    ),
+                );
             }
         }
 
@@ -1239,10 +1239,9 @@ struct GetBatchJobParams {
 
 #[cfg(feature = "gemini-image")]
 fn resolve_batch_model(model: Option<&str>) -> crate::GeminiModel {
-    match model {
-        Some("nano-banana") => crate::GeminiModel::NanoBanana,
-        _ => crate::GeminiModel::NanoBananaPro, // default
-    }
+    model
+        .and_then(crate::GeminiModel::from_name)
+        .unwrap_or_default()
 }
 
 #[cfg(not(feature = "gemini-image"))]
@@ -1383,22 +1382,8 @@ async fn generate_with_flux(
     let mut builder = FluxProvider::builder();
 
     if let Some(m) = model {
-        let flux_model = match m {
-            "flux-pro-1.1" => FluxModel::FluxPro11,
-            "flux-pro-1.1-ultra" => FluxModel::FluxPro11Ultra,
-            "flux-pro" => FluxModel::FluxPro,
-            "flux-dev" => FluxModel::FluxDev,
-            "flux-2-max" | "flux2-max" => FluxModel::Flux2Max,
-            "flux-2-pro" | "flux2-pro" => FluxModel::Flux2Pro,
-            "flux-2-flex" | "flux2-flex" => FluxModel::Flux2Flex,
-            "flux-2-klein-4b" | "flux2-klein-4b" => FluxModel::Flux2Klein4B,
-            "flux-2-klein-9b" | "flux2-klein-9b" => FluxModel::Flux2Klein9B,
-            "flux-kontext-pro" | "kontext-pro" => FluxModel::KontextPro,
-            "flux-kontext-max" | "kontext-max" => FluxModel::KontextMax,
-            "flux-fill-pro" | "fill-pro" => FluxModel::FillPro,
-            "flux-expand-pro" | "expand-pro" => FluxModel::ExpandPro,
-            _ => return Err(format!("Unknown Flux model: {}", m)),
-        };
+        let flux_model =
+            FluxModel::from_name(m).ok_or_else(|| format!("Unknown Flux model: {}", m))?;
         builder = builder.model(flux_model);
     }
 
@@ -1425,11 +1410,8 @@ async fn generate_with_gemini(
     let mut builder = GeminiProvider::builder();
 
     if let Some(m) = model {
-        let gemini_model = match m {
-            "nano-banana" => GeminiModel::NanoBanana,
-            "nano-banana-pro" => GeminiModel::NanoBananaPro,
-            _ => return Err(format!("Unknown Gemini model: {}", m)),
-        };
+        let gemini_model =
+            GeminiModel::from_name(m).ok_or_else(|| format!("Unknown Gemini model: {}", m))?;
         builder = builder.model(gemini_model);
     }
 
@@ -1464,10 +1446,8 @@ async fn generate_with_grok(
     let mut builder = GrokProvider::builder();
 
     if let Some(m) = model {
-        let grok_model = match m {
-            "grok-imagine" => GrokModel::GrokImagine,
-            _ => return Err(format!("Unknown Grok model: {}", m)),
-        };
+        let grok_model =
+            GrokModel::from_name(m).ok_or_else(|| format!("Unknown Grok model: {}", m))?;
         builder = builder.model(grok_model);
     }
 
@@ -1494,12 +1474,8 @@ async fn generate_with_openai(
     let mut builder = OpenAiImageProvider::builder();
 
     if let Some(m) = model {
-        let openai_model = match m {
-            "gpt-image-2" => OpenAiImageModel::GptImage2,
-            "gpt-image-1" => OpenAiImageModel::GptImage1,
-            "dall-e-3" => OpenAiImageModel::DallE3,
-            _ => return Err(format!("Unknown OpenAI model: {}", m)),
-        };
+        let openai_model =
+            OpenAiImageModel::from_name(m).ok_or_else(|| format!("Unknown OpenAI model: {}", m))?;
         builder = builder.model(openai_model);
     }
 
@@ -2336,10 +2312,9 @@ mod tests {
         let models: Vec<&str> = model_enum.iter().map(|m| m.as_str().unwrap()).collect();
         assert!(models.contains(&"nano-banana-pro")); // gemini
         assert!(models.contains(&"flux-2-max")); // flux
-        assert!(models.contains(&"grok-imagine")); // grok
-        assert!(models.contains(&"gpt-image-2")); // openai (post-2026-04-21)
-        assert!(models.contains(&"gpt-image-1")); // openai
-        assert!(models.contains(&"dall-e-3")); // openai
+        assert!(models.contains(&"grok-imagine-image-2.0")); // grok
+        assert!(models.contains(&"gpt-image-2.5-sunburst")); // openai
+        assert!(models.contains(&"gpt-image-2")); // openai
         assert!(models.contains(&"flux-schnell")); // fal
         assert!(models.contains(&"recraft-v4.1")); // fal (post-2026-05-14)
     }

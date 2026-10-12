@@ -324,6 +324,7 @@ impl KlingImageProvider {
 #[async_trait]
 impl ImageProvider for KlingImageProvider {
     async fn generate(&self, request: &GenerationRequest) -> Result<GeneratedImage> {
+        request.check_input_images("Kling", 1)?;
         let start = Instant::now();
 
         let task_id = self.submit(request).await?;
@@ -393,8 +394,8 @@ impl KlingImageRequest {
             aspect_ratio: req.aspect_ratio.map(|ar| ar.as_str().to_string()),
             // Kling expects raw base64 without data URI prefix
             image: req
-                .input_image
-                .as_ref()
+                .input_images
+                .first()
                 .map(|img| base64::engine::general_purpose::STANDARD.encode(img)),
         }
     }

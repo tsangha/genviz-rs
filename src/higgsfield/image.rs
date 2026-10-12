@@ -194,7 +194,7 @@ impl HiggsfieldImageProvider {
 
         // Input image for edits — write bytes to a temp file so the CLI can auto-upload it.
         let mut tmp_holder: Option<tempfile::NamedTempFile> = None;
-        if let Some(bytes) = &request.input_image {
+        if let Some(bytes) = request.input_images.first() {
             let mut tmp = tempfile::Builder::new()
                 .prefix("genviz-higgsfield-")
                 .suffix(".png")
@@ -214,6 +214,7 @@ impl HiggsfieldImageProvider {
 #[async_trait]
 impl ImageProvider for HiggsfieldImageProvider {
     async fn generate(&self, request: &GenerationRequest) -> Result<GeneratedImage> {
+        request.check_input_images("Higgsfield", 1)?;
         let start = Instant::now();
         let (extra_args, _tmp) = self.build_extra_args(request)?;
 

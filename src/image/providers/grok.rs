@@ -16,8 +16,10 @@ const EDITS_URL: &str = "https://api.x.ai/v1/images/edits";
 /// Grok Imagine model variants.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum GrokModel {
-    /// Grok Imagine - xAI's image generation model.
+    /// Grok Imagine Image 2.0 - xAI's latest image model.
     #[default]
+    GrokImagineImage2,
+    /// Grok Imagine Image - previous, cheaper image model.
     GrokImagine,
 }
 
@@ -25,7 +27,17 @@ impl GrokModel {
     /// Returns the API model identifier string.
     pub fn as_str(&self) -> &'static str {
         match self {
+            Self::GrokImagineImage2 => "grok-imagine-image-2.0",
             Self::GrokImagine => "grok-imagine-image",
+        }
+    }
+
+    /// Parses a CLI/MCP model name.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "grok-imagine-image-2.0" | "grok-imagine-2.0" => Some(Self::GrokImagineImage2),
+            "grok-imagine-image" | "grok-imagine" => Some(Self::GrokImagine),
+            _ => None,
         }
     }
 }
@@ -127,10 +139,10 @@ impl GrokProvider {
 #[async_trait]
 impl ImageProvider for GrokProvider {
     async fn generate(&self, request: &GenerationRequest) -> Result<GeneratedImage> {
+        request.check_input_images("Grok", 5)?;
         let start = Instant::now();
 
-        // Use edits endpoint if input image is provided
-        let (url, body) = if request.input_image.is_some() {
+        let (url, body) = if request.is_edit() {
             (
                 EDITS_URL,
                 serde_json::to_value(GrokEditRequest::from_generation_request(
@@ -266,42 +278,52 @@ impl GrokRequest {
 #[derive(Debug, Serialize)]
 struct ImageUrl {
     url: String,
+    r#type: &'static str,
 }
 
-/// Request for image editing endpoint.
+/// Request for image editing endpoint (`image` for one source, `images` for several).
 #[derive(Debug, Serialize)]
 struct GrokEditRequest {
     model: String,
     prompt: String,
-    /// Image as URL object (data URI or public URL).
-    image: ImageUrl,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image: Option<ImageUrl>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    images: Option<Vec<ImageUrl>>,
     n: u32,
     response_format: String,
 }
 
 impl GrokEditRequest {
     fn from_generation_request(req: &GenerationRequest, model: &GrokModel) -> Self {
-        // Format as data URI
-        let image_b64 = req
-            .input_image
-            .as_ref()
-            .map(|img| base64::engine::general_purpose::STANDARD.encode(img))
-            .unwrap_or_default();
-
-        // Detect mime type from magic bytes
-        let mime = req
-            .input_image
-            .as_ref()
-            .and_then(|img| crate::image::types::ImageFormat::from_magic_bytes(img))
-            .map(|f| f.mime_type())
-            .unwrap_or("image/png");
-
-        let data_uri = format!("data:{};base64,{}", mime, image_b64);
+        let mut urls: Vec<ImageUrl> = req
+            .input_images
+            .iter()
+            .map(|img| {
+                let mime = crate::image::types::ImageFormat::from_magic_bytes(img)
+                    .map(|f| f.mime_type())
+                    .unwrap_or("image/png");
+                ImageUrl {
+                    url: format!(
+                        "data:{};base64,{}",
+                        mime,
+                        base64::engine::general_purpose::STANDARD.encode(img)
+                    ),
+                    r#type: "image_url",
+                }
+            })
+            .collect();
+        let (image, images) = if urls.len() == 1 {
+            (urls.pop(), None)
+        } else {
+            (None, Some(urls))
+        };
 
         Self {
             model: model.as_str().to_string(),
             prompt: req.prompt.clone(),
-            image: ImageUrl { url: data_uri },
+            image,
+            images,
             n: 1,
             response_format: "b64_json".to_string(),
         }
@@ -333,6 +355,7 @@ mod tests {
     #[test]
     fn test_grok_model_as_str() {
         assert_eq!(GrokModel::GrokImagine.as_str(), "grok-imagine-image");
+        assert_eq!(GrokModel::default().as_str(), "grok-imagine-image-2.0");
     }
 
     #[test]
@@ -369,7 +392,22 @@ mod tests {
         let edit_req = GrokEditRequest::from_generation_request(&req, &GrokModel::GrokImagine);
 
         assert_eq!(edit_req.prompt, "Edit this");
-        assert!(edit_req.image.url.starts_with("data:image/png;base64,"));
+        assert!(edit_req
+            .image
+            .unwrap()
+            .url
+            .starts_with("data:image/png;base64,"));
+
+        let multi = GenerationRequest::new("Combine")
+            .with_input_image(vec![1])
+            .with_input_image(vec![2]);
+        let json = serde_json::to_value(GrokEditRequest::from_generation_request(
+            &multi,
+            &GrokModel::GrokImagineImage2,
+        ))
+        .unwrap();
+        assert!(json.get("image").is_none());
+        assert_eq!(json["images"].as_array().unwrap().len(), 2);
     }
 
     #[test]
